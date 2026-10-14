@@ -8,6 +8,7 @@ import (
 	"github.com/itering/subscan/plugins/evm/dao"
 	"github.com/itering/subscan/plugins/evm/http"
 	"github.com/itering/subscan/plugins/evm/workers"
+	"github.com/itering/subscan/share/web3"
 	"github.com/itering/subscan/util"
 	"github.com/itering/substrate-api-rpc/metadata"
 	"github.com/shopspring/decimal"
@@ -64,6 +65,7 @@ func (a *EVM) InitDao(d storage.Dao) {
 		util.Logger().Warning("EVM plugin is disabled because the runtime does not support EVM or Revive module")
 		return
 	}
+	web3.InitChainID(context.Background())
 	a.enable = true
 	a.d = d
 	a.Migrate()

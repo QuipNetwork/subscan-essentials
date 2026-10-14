@@ -257,3 +257,18 @@ when replaying events. Neither command reads unpinned latest account values.
 Real archived auxiliary replay, UI rendering and actual-image acceptance remain
 integration work; synthetic account values in unit tests are not historical
 account evidence.
+
+### EVM startup network access
+
+Importing `share/web3` now constructs the configured HTTP/WebSocket provider
+without connecting or probing `eth_chainId`. The EVM plugin calls `InitChainID`
+once only after its runtime capability check accepts EVM or Revive. Failed
+chain-ID queries retain the prior debug-log/zero-ID behavior for enabled plugins.
+Fresh-process startup tests observe zero HTTP/WebSocket connections for imports
+and unsupported runtimes, and exactly one chain-ID request for enabled runtimes.
+
+This preserves the existing enablement policy: a Revive pallet can enable the EVM
+backend, while `UI.enable_evm` controls presentation only. Quip's deployment must
+continue excluding the EVM plugin from registration. Actual-image acceptance
+must verify that exclusion together with zero `eth_*` traffic; the startup tests
+are not a substitute for that integration check.
