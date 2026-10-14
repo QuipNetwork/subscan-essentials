@@ -39,7 +39,7 @@ type ChainExtrinsicJson struct {
 	Nonce              int             `json:"nonce"`
 	ExtrinsicHash      string          `json:"extrinsic_hash"`
 	Success            bool            `json:"success"`
-	Fee                decimal.Decimal `json:"fee"`
+	FeeInfo
 }
 
 type ExtrinsicDetail struct {
@@ -54,9 +54,9 @@ type ExtrinsicDetail struct {
 	ExtrinsicHash      string          `json:"extrinsic_hash"`
 	Success            bool            `json:"success"`
 	Params             ExtrinsicParams `json:"params"`
-	Fee                decimal.Decimal `json:"fee"`
-	Finalized          bool            `json:"finalized"`
-	Lifetime           *Lifetime       `json:"lifetime"`
+	FeeInfo
+	Finalized bool      `json:"finalized"`
+	Lifetime  *Lifetime `json:"lifetime"`
 }
 
 type Lifetime struct {

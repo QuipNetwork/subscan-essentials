@@ -137,3 +137,44 @@ rm -r "$test_mod_dir"
 `ETH_RPC` directs the existing import-time EVM probe to a closed loopback port;
 it does not establish EVM-disabled application startup. Fee/session/account/author
 availability semantics and the full-image DB/API replay remain separate gates.
+
+## Fee availability
+
+New extrinsics persist separate availability and state-hash fields for estimated
+and observed fees. Both extrinsic list and detail APIs expose:
+
+| Field | Meaning |
+| --- | --- |
+| `fee` / `fee_status` | Inclusion-fee estimate excluding tip, with status `estimated`, `unknown`, or `not_applicable`. |
+| `used_fee` / `used_fee_status` | Full `TransactionPayment.TransactionFeePaid.actual_fee`, including tip, with status `available`, `unknown`, or `not_applicable`. |
+| `fee_state_hash` | Explicit execution parent hash used for the fee estimate. |
+| `used_fee_state_hash` | Block hash whose event supplied the observed fee. |
+| `fee_error` | Optional auxiliary RPC/validation failure description. |
+
+Unknown and not-applicable amounts are JSON `null`; observed/estimated zero is
+the decimal string `"0"`. API consumers must accept nullable fee fields and use
+the statuses. Existing numeric SQL columns are retained; rows without availability
+evidence default to `unknown`, so their old zero/nonzero values are not silently
+declared verified. This change does not backfill existing rows or add automatic
+fee refresh to completed blocks.
+
+Estimates use `payment_queryFeeDetails(rawExtrinsic, parentHash)`, falling back
+to `payment_queryInfo` at the same hash. A valid null `inclusionFee` means a zero
+estimate; a missing/malformed response means unknown. The broken direct
+`TransactionPaymentApi_query_info` JSON-RPC method path is removed. Nodes without
+the payment RPC methods yield unknown estimates. JSON amounts and WeightV2
+components are decoded without float64 conversion, preserving uint64 values
+including proof sizes above the signed-int64 range.
+
+An estimate failure cannot erase an observed fee, including an observed zero.
+Missing, malformed, or duplicate fee-paid events leave the observed amount
+unknown; it is never reconstructed by scaling one weight component. Bare V4/V5
+extrinsics need no estimate query; General V5 extrinsics may pay fees even though
+they are not signed. Auxiliary fee failure does not fail core ingestion.
+
+Focused tests cover RPC failures, exact large numbers, genuine zeros, tip
+preservation, malformed observations, General/bare behavior, and PostgreSQL
+persistence plus the DAO presenters used by both APIs. `TestArchivedFeeEvents`
+uses the same fixture environment as the upgrade test and checks all 107 events,
+including 20 exact fee-paid amounts. Session, author, and account availability
+remain separate follow-up changes; full-image HTTP acceptance is still pending.

@@ -279,7 +279,7 @@ func (d *Dao) extrinsicsAsDetail(ctx context.Context, e *model.ChainExtrinsic) *
 		Nonce:              e.Nonce,
 		ExtrinsicHash:      e.ExtrinsicHash,
 		Success:            e.Success,
-		Fee:                e.Fee,
+		FeeInfo:            e.FeeInfo(),
 		Finalized:          true,
 		Params:             e.Params,
 	}
@@ -301,7 +301,7 @@ func (d *Dao) ExtrinsicsAsJson(e *model.ChainExtrinsic) *model.ChainExtrinsicJso
 		AccountId:          address.Encode(e.AccountId),
 		Signature:          e.Signature,
 		Nonce:              e.Nonce,
-		Fee:                e.Fee,
+		FeeInfo:            e.FeeInfo(),
 	}
 	return ej
 }

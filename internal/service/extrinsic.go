@@ -32,12 +32,9 @@ func (s *Service) createExtrinsic(ctx context.Context,
 		extrinsics[index].Params = nil
 		if extrinsic.IsSigned {
 			countSignedExtrinsic++
-			weight, actualFee, isV2Weight := model.CheckoutWeight(eventMap[extrinsics[index].ExtrinsicIndex])
-			extrinsics[index].Fee, extrinsics[index].UsedFee, err = GetExtrinsicFee(ctx, encodeExtrinsics[index], block.ParentHash, block.SpecVersion, weight, actualFee, isV2Weight)
-			if err != nil {
-				util.Logger().Error(fmt.Errorf("extrinsic %s GetExtrinsicFee err %v", extrinsic.ExtrinsicIndex, err))
-			}
 		}
+		enrichExtrinsicFee(ctx, &extrinsics[index], encodeExtrinsics[index], block, eventMap[extrinsics[index].ExtrinsicIndex])
+
 		extrinsics[index].ID = extrinsics[index].Id()
 	}
 	if err = s.dao.CreateExtrinsic(ctx, txn, extrinsics, countSignedExtrinsic); err != nil {
@@ -59,7 +56,7 @@ func (s *Service) ExtrinsicsAsJson(e *model.ChainExtrinsic) *model.ChainExtrinsi
 		AccountId:          address.Encode(e.AccountId),
 		Signature:          e.Signature,
 		Nonce:              e.Nonce,
-		Fee:                e.Fee,
+		FeeInfo:            e.FeeInfo(),
 	}
 	return ej
 }
