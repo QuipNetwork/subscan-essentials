@@ -10,11 +10,12 @@ import (
 type IDao interface {
 	Close()
 	Ping(ctx context.Context) (err error)
-	DbBegin() *GormDB
-	DbCommit(*GormDB)
+	DbBegin() (*GormDB, error)
+	DbCommit(*GormDB) error
 	DbRollback(*GormDB)
 
 	CreateBlock(context.Context, *GormDB, *model.ChainBlock) (err error)
+	PublishBlockCompletion(context.Context, uint) error
 	UpdateEventAndExtrinsic(*GormDB, *model.ChainBlock, int, int, int, string, bool, bool) error
 	GetNearBlock(uint) *model.ChainBlock
 	SplitBlockTable(blockNum uint)

@@ -8,7 +8,7 @@ import (
 )
 
 func TestService_AddEvent(t *testing.T) {
-	txn := testSrv.dao.DbBegin()
+	txn, _ := testSrv.dao.DbBegin()
 	defer testSrv.dao.DbRollback(txn)
 	err := testSrv.AddEvent(txn, &testBlock, []model.ChainEvent{testEvent})
 	assert.NoError(t, err)

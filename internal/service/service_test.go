@@ -95,10 +95,14 @@ func (m *MockDao) SetHeartBeatNow(context.Context, string) error {
 	return nil
 }
 
-func (m *MockDao) DbBegin() *dao.GormDB {
-	return &dao.GormDB{}
+func (m *MockDao) DbBegin() (*dao.GormDB, error) {
+	return &dao.GormDB{}, nil
 }
-func (m *MockDao) DbCommit(*dao.GormDB) {
+func (m *MockDao) DbCommit(*dao.GormDB) error {
+	return nil
+}
+func (m *MockDao) PublishBlockCompletion(context.Context, uint) error {
+	return nil
 }
 func (m *MockDao) DbRollback(*dao.GormDB) {
 }

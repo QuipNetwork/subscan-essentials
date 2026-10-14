@@ -103,15 +103,19 @@ const (
 )
 
 func (s *Service) FillBlockData(ctx context.Context, blockNum uint, force bool) (err error) {
-	block := s.dao.GetBlockByNum(ctx, blockNum)
-	if block != nil && block.Finalized && !block.CodecError && !force {
-		return nil
-	}
 	defer func() {
 		if err != nil {
 			metrics.SubBlockFillError.Inc()
 		}
 	}()
+	block := s.dao.GetBlockByNum(ctx, blockNum)
+	if block != nil && block.Finalized && !block.CodecError && !force {
+		// Recover publication after a crash, lost Redis reply, or ambiguous commit.
+		if err = s.dao.PublishBlockCompletion(ctx, blockNum); err != nil {
+			return fmt.Errorf("committed block %d publication: %w", blockNum, err)
+		}
+		return nil
+	}
 
 	conn := s.dbStorage.RPCPool().Conn
 	now := time.Now()
@@ -180,14 +184,9 @@ func (s *Service) FillBlockData(ctx context.Context, blockNum uint, force bool) 
 		}
 	}
 
-	var setFinalized = func() {
-		_ = s.dao.SaveFillAlreadyFinalizedBlockNum(context.TODO(), int(blockNum))
-	}
 	// for Create
 	if err = s.CreateChainBlock(ctx, blockHash, &rpcBlock.Block, event, specVersion, sessionIndex); err == nil {
-		_ = s.dao.SaveFillAlreadyBlockNum(ctx, int(blockNum))
 		util.Logger().Debug(fmt.Sprintf("Fill Block num %d hash %s use %d ms", blockNum, blockHash, time.Since(now).Milliseconds()))
-		setFinalized()
 	} else {
 		log.Printf("Create chain block error %v", err)
 	}

@@ -8,7 +8,7 @@ import (
 )
 
 func TestDao_CreateLog(t *testing.T) {
-	txn := testDao.DbBegin()
+	txn, _ := testDao.DbBegin()
 	err := testDao.CreateLog(txn, []model.ChainLog{testLog})
 	txn.Commit()
 	assert.NoError(t, err)

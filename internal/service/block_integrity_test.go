@@ -28,13 +28,14 @@ type blockIntegrityDao struct {
 }
 
 func (d *blockIntegrityDao) SplitBlockTable(uint) { d.actions = append(d.actions, "split/cache") }
-func (d *blockIntegrityDao) DbBegin() *dao.GormDB {
+func (d *blockIntegrityDao) DbBegin() (*dao.GormDB, error) {
 	d.actions = append(d.actions, "begin")
-	return &dao.GormDB{}
+	return &dao.GormDB{}, nil
 }
-func (d *blockIntegrityDao) DbCommit(*dao.GormDB) {
+func (d *blockIntegrityDao) DbCommit(*dao.GormDB) error {
 	d.actions = append(d.actions, "commit")
 	d.committed = true
+	return nil
 }
 func (d *blockIntegrityDao) DbRollback(*dao.GormDB) { d.actions = append(d.actions, "rollback") }
 func (d *blockIntegrityDao) CreateExtrinsic(_ context.Context, _ *dao.GormDB, rows []model.ChainExtrinsic, _ int) error {

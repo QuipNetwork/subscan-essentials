@@ -25,6 +25,13 @@ func (d *Dao) SplitBlockTable(blockNum uint) {
 // CreateBlock mysql db transaction
 func (d *Dao) CreateBlock(ctx context.Context, txn *GormDB, cb *model.ChainBlock) (err error) {
 	query := txn.WithContext(ctx).Scopes().Scopes(d.TableNameFunc(cb), model.IgnoreDuplicate).Create(cb)
+	if query.Error != nil {
+		return query.Error
+	}
+	// Also persist a zero-count receipt for empty blocks.
+	if err := recordBlockCounts(ctx, txn, cb.BlockNum, 0, 0); err != nil {
+		return err
+	}
 	// Check if you need to create a new table(block, extrinsic, event, log) after created block
 	if maxTableBlockNum < cb.BlockNum+model.SplitTableBlockNum {
 		tableName := model.TableNameFromInterface(model.ChainBlock{BlockNum: cb.BlockNum + model.SplitTableBlockNum}, d.db)

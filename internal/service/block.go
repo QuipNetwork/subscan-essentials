@@ -47,7 +47,10 @@ func (s *Service) CreateChainBlock(ctx context.Context, hash string, block *smod
 	}
 
 	s.dao.SplitBlockTable(blockNum)
-	txn := s.dao.DbBegin()
+	txn, err := s.dao.DbBegin()
+	if err != nil {
+		return fmt.Errorf("block %d begin: %w", blockNum, err)
+	}
 	defer s.dao.DbRollback(txn)
 
 	eventMap := s.checkoutExtrinsicEvents(events, blockNum)
@@ -83,25 +86,32 @@ func (s *Service) CreateChainBlock(ctx context.Context, hash string, block *smod
 	cb.ExtrinsicsCount = len(extrinsics)
 	cb.EventCount = len(events)
 
-	if err = s.dao.CreateBlock(ctx, txn, &cb); err == nil {
-		s.dao.DbCommit(txn)
-		// emit extrinsic/event process after commit
-		for index := range events {
-			e := events[index]
-			e.BlockNum = blockNum
-			if err = s.emitEvent(&e); err != nil {
-				return err
-			}
-		}
-		for index := range extrinsics {
-			e := extrinsics[index]
-			if err = s.emitExtrinsic(ctx, &e); err != nil {
-				return err
-			}
-		}
-		return s.emitBlock(ctx, &cb)
+	if err = s.dao.CreateBlock(ctx, txn, &cb); err != nil {
+		return err
 	}
-	return err
+	if err = s.dao.DbCommit(txn); err != nil {
+		return fmt.Errorf("block %d commit: %w", blockNum, err)
+	}
+	// Core ingestion is complete. Queue delivery is best effort and must not
+	// turn a committed block into an ingestion failure or suppress progress.
+	for index := range events {
+		events[index].BlockNum = blockNum
+		if emitErr := s.emitEvent(&events[index]); emitErr != nil {
+			util.Logger().Error(fmt.Errorf("committed block %d event notification: %w", blockNum, emitErr))
+		}
+	}
+	for index := range extrinsics {
+		if emitErr := s.emitExtrinsic(ctx, &extrinsics[index]); emitErr != nil {
+			util.Logger().Error(fmt.Errorf("committed block %d extrinsic notification: %w", blockNum, emitErr))
+		}
+	}
+	if emitErr := s.emitBlock(ctx, &cb); emitErr != nil {
+		util.Logger().Error(fmt.Errorf("committed block %d notification: %w", blockNum, emitErr))
+	}
+	if err = s.dao.PublishBlockCompletion(ctx, blockNum); err != nil {
+		return fmt.Errorf("committed block %d publication: %w", blockNum, err)
+	}
+	return nil
 }
 
 func (s *Service) checkoutExtrinsicEvents(e []model.ChainEvent, blockNumInt uint) map[string][]model.ChainEvent {

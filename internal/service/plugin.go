@@ -43,6 +43,9 @@ func (s *Service) emitEvent(event *model.ChainEvent) (err error) {
 	}
 	for _, pluginName := range subscribeEvent[strings.ToLower(event.ModuleId)] {
 		if plugins.RegisteredPlugins[pluginName].Enable() {
+			if mq.Instant == nil {
+				return fmt.Errorf("notification queue unavailable")
+			}
 			if err = mq.Instant.Publish("plugin-event", "process", map[string]interface{}{"event_index": event.EventIndex(), "plugin_name": pluginName}); err != nil {
 				return err
 			}
@@ -68,6 +71,9 @@ func (s *Service) emitBlock(_ context.Context, block *model.ChainBlock) (err err
 func (s *Service) emitExtrinsic(_ context.Context, extrinsic *model.ChainExtrinsic) (err error) {
 	for _, pluginName := range subscribeExtrinsic[extrinsic.CallModule] {
 		if plugins.RegisteredPlugins[pluginName].Enable() {
+			if mq.Instant == nil {
+				return fmt.Errorf("notification queue unavailable")
+			}
 			if err = mq.Instant.Publish("plugin-extrinsic", "process", map[string]interface{}{"extrinsic_index": extrinsic.ExtrinsicIndex, "plugin_name": pluginName}); err != nil {
 				return err
 			}

@@ -10,6 +10,7 @@ import (
 	"github.com/itering/subscan/util/address"
 	"github.com/itering/substrate-api-rpc"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"math/rand"
 	"strings"
 )
@@ -19,16 +20,50 @@ const (
 	extrinsicCountCacheTTLJitter = 3600
 )
 
-func (d *Dao) CreateExtrinsic(c context.Context, txn *GormDB, extrinsic []model.ChainExtrinsic, signedExtrinsicCount int) error {
-	if len(extrinsic) == 0 {
-		return nil
+// CreateExtrinsic records only rows actually inserted, in the same SQL transaction.
+// Grouping by signedness makes conflict-skipped signed rows count correctly.
+func (d *Dao) CreateExtrinsic(c context.Context, txn *GormDB, extrinsic []model.ChainExtrinsic, _ int) error {
+	groups := make(map[uint]map[bool][]model.ChainExtrinsic)
+	for _, e := range extrinsic {
+		if groups[e.BlockNum] == nil {
+			groups[e.BlockNum] = make(map[bool][]model.ChainExtrinsic)
+		}
+		groups[e.BlockNum][e.IsSigned] = append(groups[e.BlockNum][e.IsSigned], e)
 	}
-	query := txn.Scopes(d.TableNameFunc(&extrinsic[0]), model.IgnoreDuplicate).CreateInBatches(extrinsic, 2000)
-	if query.RowsAffected > 0 {
-		_ = d.IncrMetadata(c, "count_extrinsic", int(query.RowsAffected))
-		_ = d.IncrMetadata(c, "count_signed_extrinsic", signedExtrinsicCount)
+	for blockNum, signedGroups := range groups {
+		for _, signed := range []bool{false, true} {
+			rows := signedGroups[signed]
+			if len(rows) == 0 {
+				continue
+			}
+			var inserted int64
+			for start := 0; start < len(rows); start += 2000 {
+				end := min(start+2000, len(rows))
+				batch := rows[start:end:end]
+				query := txn.WithContext(c).Scopes(d.TableNameFunc(&batch[0]), model.IgnoreDuplicate)
+				if d.DbDriver == "postgres" {
+					// The pinned Gorm's default-column RETURNING scan counts skipped
+					// input slots as affected rows on mixed duplicate/new batches.
+					// RETURNING * counts only records returned by PostgreSQL. Pass
+					// an addressable batch: its CreateInBatches helper loses that.
+					query = query.Clauses(clause.Returning{})
+				}
+				query = query.Create(&batch)
+				if query.Error != nil {
+					return query.Error
+				}
+				inserted += query.RowsAffected
+			}
+			signedCount := int64(0)
+			if signed {
+				signedCount = inserted
+			}
+			if err := recordBlockCounts(c, txn, blockNum, inserted, signedCount); err != nil {
+				return err
+			}
+		}
 	}
-	return query.Error
+	return nil
 }
 
 func (d *Dao) GetExtrinsicCount(ctx context.Context, queryWhere ...model.Option) int64 {

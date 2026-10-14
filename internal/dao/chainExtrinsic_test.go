@@ -13,7 +13,7 @@ import (
 
 func TestDao_CreateExtrinsic(t *testing.T) {
 	ctx := context.TODO()
-	txn := testDao.DbBegin()
+	txn, _ := testDao.DbBegin()
 	_ = testDao.CreateExtrinsic(ctx, txn, []model.ChainExtrinsic{testExtrinsic}, 1)
 	txn.Commit()
 }
@@ -103,7 +103,7 @@ func seedLatestExtrinsicFixtures(t *testing.T) {
 	testDao.AddIndex(model.SplitTableBlockNum)
 
 	ctx := context.TODO()
-	txn := testDao.DbBegin()
+	txn, _ := testDao.DbBegin()
 	err := testDao.CreateExtrinsic(ctx, txn, []model.ChainExtrinsic{{
 		ID:                 model.SplitTableBlockNum*model.IdGenerateCoefficient + 1,
 		ExtrinsicIndex:     fmt.Sprintf("%d-1", model.SplitTableBlockNum+1),

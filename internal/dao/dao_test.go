@@ -98,7 +98,7 @@ func init() {
 		db.Exec(fmt.Sprintf("TRUNCATE TABLE %s;", value))
 	}
 	ctx := context.TODO()
-	txn := testDao.DbBegin()
+	txn, _ := testDao.DbBegin()
 	err = testDao.CreateBlock(ctx, txn, &testBlock)
 	if err != nil {
 		panic(err)
