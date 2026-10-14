@@ -126,6 +126,7 @@ func TestService_GetBlocksSampleByNums(t *testing.T) {
 	util.AddressType = "42"
 	blocks, _ := testSrv.GetBlocksSampleCursor(context.TODO(), 10, 0, 0)
 	assert.Equal(t, []model.SampleBlockJson{{
+		BlockStateInfo: model.BlockStateInfo{SessionStatus: model.StateUnknown, AuthorStatus: model.StateUnknown},
 		BlockNum:       947687,
 		BlockTimestamp: 1594791900,
 		Hash:           "0xd68b38c412404a4b5d4974e6dbb4a491ed7b6200d4edc24152693804441ce99d",

@@ -2,19 +2,20 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/itering/subscan/model"
 	"github.com/itering/subscan/util"
-	"github.com/itering/subscan/util/address"
 	"github.com/itering/substrate-api-rpc"
 	"github.com/itering/substrate-api-rpc/hasher"
 	smodel "github.com/itering/substrate-api-rpc/model"
-	"github.com/itering/substrate-api-rpc/rpc"
 	"github.com/itering/substrate-api-rpc/storage"
 	"strings"
 )
 
-func (s *Service) CreateChainBlock(ctx context.Context, hash string, block *smodel.Block, event string, spec int, sessionIndex uint) (err error) {
+// The final argument is retained for existing callers; an unqualified numeric
+// session index cannot establish availability or the state used to obtain it.
+func (s *Service) CreateChainBlock(ctx context.Context, hash string, block *smodel.Block, event string, spec int, _ uint) (err error) {
 	var (
 		decodeExtrinsics []map[string]interface{}
 		decodeEvent      interface{}
@@ -52,15 +53,6 @@ func (s *Service) CreateChainBlock(ctx context.Context, hash string, block *smod
 		return fmt.Errorf("block %d: %w", blockNum, err)
 	}
 
-	s.dao.SplitBlockTable(blockNum)
-	txn, err := s.dao.DbBegin()
-	if err != nil {
-		return fmt.Errorf("block %d begin: %w", blockNum, err)
-	}
-	defer s.dao.DbRollback(txn)
-
-	eventMap := s.checkoutExtrinsicEvents(events, blockNum)
-
 	cb := model.ChainBlock{
 		ID:             blockNum,
 		Hash:           hash,
@@ -71,6 +63,28 @@ func (s *Service) CreateChainBlock(ctx context.Context, hash string, block *smod
 		SpecVersion:    spec,
 		Finalized:      true,
 	}
+
+	var preRuntime []byte
+	preRuntimeCount := 0
+	for _, log := range logs {
+		if strings.EqualFold(log.Type, "PreRuntime") {
+			preRuntimeCount++
+			preRuntime, _ = json.Marshal(log.Value)
+		}
+	}
+	if preRuntimeCount != 1 {
+		preRuntime = nil
+	}
+	s.enrichBlockState(ctx, &cb, preRuntime)
+
+	s.dao.SplitBlockTable(blockNum)
+	txn, err := s.dao.DbBegin()
+	if err != nil {
+		return fmt.Errorf("block %d begin: %w", blockNum, err)
+	}
+	defer s.dao.DbRollback(txn)
+
+	eventMap := s.checkoutExtrinsicEvents(events, blockNum)
 
 	extrinsics = s.fillExtrinsicHash(blockNum, extrinsics, block.Extrinsics)
 	cb.BlockTimestamp = FindOutBlockTime(extrinsics)
@@ -83,12 +97,10 @@ func (s *Service) CreateChainBlock(ctx context.Context, hash string, block *smod
 		return err
 	}
 
-	var runtimeLogData []byte
-	if runtimeLogData, err = s.EmitLog(txn, blockNum, logs, true); err != nil {
+	if _, err = s.EmitLog(txn, blockNum, logs, true); err != nil {
 		return err
 	}
 
-	cb.Validator = s.blockAuthor(ctx, cb.ParentHash, events, runtimeLogData, sessionIndex)
 	cb.ExtrinsicsCount = len(extrinsics)
 	cb.EventCount = len(events)
 
@@ -134,19 +146,6 @@ func (s *Service) GetBlockByHashJson(ctx context.Context, hash string) *model.Ch
 	return s.dao.BlockAsJson(ctx, block)
 }
 
-func (s *Service) ValidatorsList(hash string) (validatorList []string) {
-	validatorsRaw, _ := rpc.ReadStorage(nil, "Session", "Validators", hash)
-	for _, addr := range validatorsRaw.ToStringSlice() {
-		validatorList = append(validatorList, util.TrimHex(addr))
-	}
-	return
-}
-
-func (s *Service) SessionIndex(hash string) uint {
-	index, _ := rpc.ReadStorage(nil, "Session", "CurrentIndex", hash)
-	return uint(index.ToInt())
-}
-
 func (s *Service) fillExtrinsicHash(blockNum uint, extrinsicList []model.ChainExtrinsic, extrinsicRaws []string) []model.ChainExtrinsic {
 	for i, e := range extrinsicList {
 		extrinsicList[i].BlockNum = blockNum
@@ -156,31 +155,4 @@ func (s *Service) fillExtrinsicHash(blockNum uint, extrinsicList []model.ChainEx
 		extrinsicList[i].ExtrinsicIndex = fmt.Sprintf("%d-%d", blockNum, i)
 	}
 	return extrinsicList
-}
-
-func (s *Service) blockAuthor(ctx context.Context, parentHash string, events []model.ChainEvent, runtimeLogData []byte, sessionIndex uint) string {
-	if len(runtimeLogData) > 0 {
-		// check new session
-		var validatorList []string
-		newSession := false
-		for _, e := range events {
-			if strings.EqualFold(e.ModuleId, "Session") && strings.EqualFold(e.EventId, "NewSession") {
-				newSession = true
-			}
-		}
-		// newSession use new validator list
-		if newSession || sessionIndex == 0 {
-			validatorList = s.ValidatorsList(parentHash)
-		} else {
-			validatorList = s.dao.GetSessionValidatorsById(ctx, sessionIndex)
-			// if db not found, use on-chain query
-			if len(validatorList) == 0 {
-				validatorList = s.ValidatorsList(parentHash)
-				// save to db
-				_ = s.dao.CreateNewSession(ctx, sessionIndex, validatorList)
-			}
-		}
-		return address.Format(substrate.ExtractAuthor(runtimeLogData, validatorList))
-	}
-	return ""
 }

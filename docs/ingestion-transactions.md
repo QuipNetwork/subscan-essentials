@@ -178,3 +178,39 @@ persistence plus the DAO presenters used by both APIs. `TestArchivedFeeEvents`
 uses the same fixture environment as the upgrade test and checks all 107 events,
 including 20 exact fee-paid amounts. Session, author, and account availability
 remain separate follow-up changes; full-image HTTP acceptance is still pending.
+
+### Session and author observations
+
+Block list/detail responses add `session_index` (nullable unsigned integer),
+`session_status`, `session_state_hash`, `session_error`, `author_status`,
+`author_state_hash`, and `author_error`. Statuses are `available`, `absent`, or
+`unknown`. A verified session zero is numeric `0`; unavailable or absent session
+indices are `null`. Legacy rows with no status remain unverified (`unknown`);
+existing validator strings are retained for compatibility. New unavailable authors
+have an empty `validator` and an explicit status/error. Consumers must inspect
+status, rather than treating an empty string or null as a real value. No automatic
+historical backfill is performed.
+
+Session index and validator order are observations of the block's **post-state**,
+using metadata selected by `state_getRuntimeVersion(blockHash)`. The storage prefix,
+SCALE type, modifier and default come from that metadata, never global latest
+metadata. Block body/event decoding still uses parent execution metadata. At a
+session boundary the author index maps through the block's new validator order;
+the old session-number-only SQL cache is no longer used. This follows Quip's
+BABE/session mapping (`pallet_session::FindAccountFromAuthorIndex`); BABE's session
+hook installs the new epoch authorities during initialization. Only BABE and Aura
+pre-runtime digests are supported. Missing/ambiguous/unsupported digests and invalid
+author indices produce unknown, never an inferred account or an ingestion panic.
+
+RPC null for a metadata `Default` entry decodes its fallback (including legitimate
+session zero). RPC null for `Optional` is absent. RPC errors, missing metadata,
+malformed storage and missing results are unknown. Session/author queries run before
+the core SQL transaction; failure does not prevent valid core rows from committing.
+The loader releases its pooled RPC connection first, so enrichment cannot deadlock
+by borrowing another slot while all workers hold loader connections.
+Strict lengths guard the legacy SCALE decoder's zero padding of truncated integers
+and AccountIds. Validator vectors are specifically checked as Quip AccountId32
+vectors. This does not generalize the SDK's storage decoder or change its API.
+
+Account state availability, UI compatibility and actual-image acceptance remain
+separate gates; these observations do not establish them.

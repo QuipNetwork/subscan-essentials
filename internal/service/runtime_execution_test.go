@@ -134,6 +134,8 @@ func executionRPC(t *testing.T, respond func(string, []interface{}) (interface{}
 }
 
 func TestFillUsesExecutionRuntime(t *testing.T) {
+	websocket.SetChannelPoolMaxCap(1)
+	t.Cleanup(func() { websocket.SetChannelPoolMaxCap(25) })
 	const parentSpec, postSpec = 900201, 900202
 	for _, mode := range []string{"upgrade", "ordinary", "genesis", "missing parent", "wrong header", "runtime error", "runtime null", "runtime malformed", "metadata error", "metadata malformed"} {
 		t.Run(mode, func(t *testing.T) {
@@ -269,13 +271,13 @@ func TestFillUsesExecutionRuntime(t *testing.T) {
 				}
 			}
 			if mode == "upgrade" {
-				require.Equal(t, []string{parent, hash}, runtimeHashes)
+				require.Equal(t, []string{parent, hash, hash}, runtimeHashes)
 				require.ElementsMatch(t, []string{parent, hash}, metadataHashes)
 			} else if mode == "ordinary" {
-				require.Equal(t, []string{parent, hash}, runtimeHashes)
+				require.Equal(t, []string{parent, hash, hash}, runtimeHashes)
 				require.Equal(t, []string{parent}, metadataHashes)
 			} else {
-				require.Equal(t, []string{hash}, runtimeHashes)
+				require.Equal(t, []string{hash, hash}, runtimeHashes)
 				require.Equal(t, []string{hash}, metadataHashes)
 			}
 		})

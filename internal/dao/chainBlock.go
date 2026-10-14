@@ -187,6 +187,7 @@ func (d *Dao) GetBlockByNum(ctx context.Context, blockNum uint) *model.ChainBloc
 
 func (d *Dao) BlockAsJson(_ context.Context, block *model.ChainBlock) *model.ChainBlockJson {
 	bj := model.ChainBlockJson{
+		BlockStateInfo:  block.StateInfo(),
 		BlockNum:        block.BlockNum,
 		BlockTimestamp:  block.BlockTimestamp,
 		Hash:            block.Hash,

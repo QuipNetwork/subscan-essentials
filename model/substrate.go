@@ -25,6 +25,7 @@ const (
 )
 
 type ChainBlock struct {
+	BlockStateInfo
 	ID              uint   `gorm:"primary_key" json:"id"`
 	BlockNum        uint   `json:"block_num" gorm:"index:block_num,unique"`
 	BlockTimestamp  int    `json:"block_timestamp"`

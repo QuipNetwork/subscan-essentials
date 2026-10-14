@@ -8,7 +8,6 @@ import (
 	"github.com/itering/subscan/share/metrics"
 	"github.com/itering/subscan/util/mq"
 	"github.com/itering/substrate-api-rpc/model"
-	"github.com/itering/substrate-api-rpc/storage"
 	"sync"
 	"time"
 
@@ -99,7 +98,6 @@ const (
 	wsBlock
 	wsEvent
 	wsSpec
-	wsSessionIndex
 )
 
 func (s *Service) FillBlockData(ctx context.Context, blockNum uint, force bool) (err error) {
@@ -118,7 +116,11 @@ func (s *Service) FillBlockData(ctx context.Context, blockNum uint, force bool) 
 	if err != nil {
 		return fmt.Errorf("block RPC connection: %w", err)
 	}
-	defer connection.Close()
+	defer func() {
+		if connection != nil {
+			_ = connection.Close()
+		}
+	}()
 	conn := connection.Conn
 	now := time.Now()
 	v := &model.JsonRpcResult{}
@@ -171,22 +173,13 @@ func (s *Service) FillBlockData(ctx context.Context, blockNum uint, force bool) 
 		return err
 	}
 
-	// session index
-	if err = websocket.SendWsRequest(conn, v, rpc.StateGetStorage(wsSessionIndex, util.SessionIndexStorageKey, blockHash)); err != nil {
-		return fmt.Errorf("websocket send error: %v", err)
-	}
-
-	var sessionIndex uint
-	sessionIndexData, err := v.ToString()
-	if err == nil || sessionIndexData != "" {
-		r, _, err := storage.Decode(sessionIndexData, "U32", nil)
-		if err == nil {
-			sessionIndex = uint(r.ToInt())
-		}
-	}
+	// Return the loader connection before enrichment borrows from the same
+	// bounded pool. Keeping it would deadlock when all workers hold one slot.
+	_ = connection.Close()
+	connection = nil
 
 	// for Create
-	if err = s.CreateChainBlock(ctx, blockHash, &rpcBlock.Block, event, execution.SpecVersion, sessionIndex); err == nil {
+	if err = s.CreateChainBlock(ctx, blockHash, &rpcBlock.Block, event, execution.SpecVersion, 0); err == nil {
 		util.Logger().Debug(fmt.Sprintf("Fill Block num %d hash %s use %d ms", blockNum, blockHash, time.Since(now).Milliseconds()))
 	} else {
 		log.Printf("Create chain block error %v", err)
