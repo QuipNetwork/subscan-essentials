@@ -2,15 +2,19 @@ package service
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	substrate "github.com/itering/substrate-api-rpc"
+	rpcmodel "github.com/itering/substrate-api-rpc/model"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/blake2b"
 )
 
 func babeFixture(t *testing.T, name string) []byte {
@@ -86,4 +90,67 @@ func TestNativeRuntimeSessionTransition(t *testing.T) {
 	wrong, err := authorFromDigest(raw, transition.ParentValidators)
 	require.NoError(t, err)
 	require.NotEqual(t, transition.ExpectedAuthor, wrong)
+}
+
+func TestArchivedPrimaryBabeHeader(t *testing.T) {
+	var provenance struct {
+		BlockNumber      uint32 `json:"blockNumber"`
+		BlockHash        string `json:"blockHash"`
+		SourceFileSHA256 string `json:"sourceFileSHA256"`
+		AuthorityIndex   int    `json:"authorityIndex"`
+	}
+	require.NoError(t, json.Unmarshal(babeFixture(t, "aglais-591853-provenance.json"), &provenance))
+	raw := babeFixture(t, "aglais-591853.json")
+	require.Equal(t, provenance.SourceFileSHA256, hex.EncodeToString(sha256Sum(raw)))
+	var block rpcmodel.BlockResult
+	require.NoError(t, json.Unmarshal(raw, &block))
+	header := block.Block.Header
+	number, err := strconv.ParseUint(strings.TrimPrefix(header.Number, "0x"), 16, 32)
+	require.NoError(t, err)
+	require.Equal(t, uint32(591853), provenance.BlockNumber)
+	require.EqualValues(t, provenance.BlockNumber, number)
+	decodeHex := func(s string) []byte {
+		value, err := hex.DecodeString(strings.TrimPrefix(s, "0x"))
+		require.NoError(t, err)
+		return value
+	}
+	// Independently reproduce this header's SCALE encoding and Blake2b-256.
+	encoded := decodeHex(header.ParentHash)
+	require.True(t, number >= 1<<14 && number < 1<<30)
+	encoded = binary.LittleEndian.AppendUint32(encoded, uint32(number)<<2|2)
+	encoded = append(encoded, decodeHex(header.StateRoot)...)
+	encoded = append(encoded, decodeHex(header.ExtrinsicsRoot)...)
+	require.Less(t, len(header.Digest.Logs), 64)
+	encoded = append(encoded, byte(len(header.Digest.Logs)<<2))
+	for _, log := range header.Digest.Logs {
+		encoded = append(encoded, decodeHex(log)...)
+	}
+	hash := blake2b.Sum256(encoded)
+	require.Equal(t, "0xe5e55f20230e3e8f730ef47e54cd265e1aa9b1271cd506131231108d5695caa9", provenance.BlockHash)
+	require.Equal(t, provenance.BlockHash, "0x"+hex.EncodeToString(hash[:]))
+	logs, err := substrate.DecodeLogDigest(header.Digest.Logs)
+	require.NoError(t, err)
+	preRuntimeCount := 0
+	for _, log := range logs {
+		if !strings.EqualFold(log.Type, "PreRuntime") {
+			continue
+		}
+		preRuntimeCount++
+		data, err := json.Marshal(log.Value)
+		require.NoError(t, err)
+		var digest substrate.PreRuntime
+		require.NoError(t, json.Unmarshal(data, &digest))
+		payload := decodeHex(digest.Data)
+		require.Len(t, payload, 840)
+		require.Equal(t, byte(1), payload[0])
+		require.Equal(t, 2, provenance.AuthorityIndex)
+		require.EqualValues(t, provenance.AuthorityIndex, binary.LittleEndian.Uint32(payload[1:5]))
+		// Synthetic labels test index mapping only; this capture does not include
+		// Session.Validators at this exact hash, so no account attribution claim.
+		validators := []string{strings.Repeat("11", 32), strings.Repeat("22", 32), strings.Repeat("33", 32)}
+		author, err := authorFromDigest(data, validators)
+		require.NoError(t, err)
+		require.Equal(t, validators[provenance.AuthorityIndex], author)
+	}
+	require.Equal(t, 1, preRuntimeCount)
 }

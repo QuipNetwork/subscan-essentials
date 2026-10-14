@@ -1,0 +1,20 @@
+{
+  "chain": "aglais",
+  "captureGenerated": "2026-10-13",
+  "sourceCapture": "q901/live",
+  "sourceManifestSHA256": "5aaddb81d205c3ec92a3aca0c93cd12063d857a0ef0769a43cf378e3ba7dd197",
+  "sourceFile": "live/block_591853.json",
+  "sourceFileSHA256": "029c7ba97024c438a6ecfe9031e94e667b87ea7a5b57456796a50dacab036ab6",
+  "sourceIndexFile": "live/blocks_index.json",
+  "sourceIndexSHA256": "640855ae9e96747c98c3085c04ebd79350fc9555686794ee3fa897d8dc5bef91",
+  "blockNumber": 591853,
+  "blockHash": "0xe5e55f20230e3e8f730ef47e54cd265e1aa9b1271cd506131231108d5695caa9",
+  "finalizedHeadNumber": 591948,
+  "finalizedHeadHash": "0x1f4f03e6d63a2e11e70bb1b4b7beb5b419e830842a3ef8553ce3af2cd69773fd",
+  "finalizedHeadFileSHA256": "5f3b1cb20923f753a13e70573a780372c50cc35ab1d9fd4d9d2a41299d82088f",
+  "verification": "At import, SHA256 checked for all 96 block responses 591853..591948; SCALE header Blake2b-256 matched the captured block index for each; all parent links chained to captured finalized_hash. This trusts the captured node finality response; no independent GRANDPA verification.",
+  "variant": 1,
+  "payloadBytes": 840,
+  "authorityIndex": 2,
+  "sample": "27 PrimaryVRF/840 and 73 SecondaryPlain/13 in captured 591849..591948; sample-specific, not a network-wide rate."
+}
