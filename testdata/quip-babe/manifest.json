@@ -1,0 +1,12 @@
+{
+  "sdkCommit": "845eb9986c7131056b077d14ad7249f9d65ca111",
+  "runtimeCommit": "52a9070944d4cd2319a5cddcd2da1d8eb0a63abc",
+  "files": {
+    "primary.scale": "6eca98bb983670d3a8c0c839611f1f5d8dfc1d4986e0137990804f519070f02c",
+    "secondary-vrf.scale": "2226a0ac051dcc6c86d81b01ac2aaa9448ba91fbf5ee50f3519b58d72004033b",
+    "session-transition.json": "172b8e9cb1acc3278616a5167a1db75220ccfe386600a024a7da9b1dbdb47510",
+    "session-transition.rs": "0526af98dfd2617bf5b919f1ea93b603020a5ea653d20a7f78237f15294d8009",
+    "generator/Cargo.toml": "1d5db72900ab18377000fe7c655e8abdea1232cc21f3c4edca65b5c6c87e89d9",
+    "generator/src/main.rs": "68833ed0dfb482c1a59d7dfe29e955555c3e8604b6bc0ecbb97d027e995747fc"
+  }
+}

@@ -74,7 +74,7 @@ func TestBlockStateAvailability(t *testing.T) {
 		return nil, fmt.Errorf("unexpected %s %v", method, params)
 	})
 	s := &Service{}
-	for _, mode := range []string{"default zero", "observed zero", "rotation", "optional absent", "rpc unknown", "runtime unknown", "truncated index", "trailing index", "bad hex", "bad validators", "out of bounds", "missing digest"} {
+	for _, mode := range []string{"default zero", "observed zero", "rotation", "hybrid primary", "hybrid secondary", "optional absent", "rpc unknown", "runtime unknown", "truncated index", "trailing index", "bad hex", "bad validators", "out of bounds", "missing digest"} {
 		t.Run(mode, func(t *testing.T) {
 			responseMu.Lock()
 			session, validators, runtimeErr, storageErr = nil, "0x04"+account, nil, nil
@@ -87,6 +87,13 @@ func TestBlockStateAvailability(t *testing.T) {
 				session = "0x01000000"
 				validators = "0x08" + strings.Repeat("cd", 32) + account
 				digest = babeAuthorDigest(1)
+			case "hybrid primary", "hybrid secondary":
+				name := "primary.scale"
+				if mode == "hybrid secondary" {
+					name = "secondary-vrf.scale"
+				}
+				digest, _ = json.Marshal(substrate.PreRuntime{Engine: substrate.CidBabe, Data: hex.EncodeToString(babeFixture(t, name))})
+				validators = "0x08" + strings.Repeat("cd", 32) + account
 			case "optional absent":
 				m.Metadata.Modules[0].Storage[0].Modifier = "Optional"
 			case "rpc unknown":
@@ -179,24 +186,14 @@ func TestAuthorDigestValidation(t *testing.T) {
 		_, err := authorFromDigest(data, []string{account})
 		require.Error(t, err)
 	}
-	for _, variant := range []byte{1, 2, 3} {
-		size := 109
-		if variant == 2 {
-			size = 13
-		}
-		data := make([]byte, size)
-		data[0] = variant
-		raw, err := json.Marshal(substrate.PreRuntime{Engine: substrate.CidBabe, Data: hex.EncodeToString(data)})
-		require.NoError(t, err)
-		author, err := authorFromDigest(raw, []string{account})
-		require.NoError(t, err)
-		require.Equal(t, account, author)
-	}
+	author, err := authorFromDigest(babeAuthorDigest(0), []string{account})
+	require.NoError(t, err)
+	require.Equal(t, account, author)
 	data := make([]byte, 8)
 	binary.LittleEndian.PutUint64(data, ^uint64(0))
 	raw, err := json.Marshal(substrate.PreRuntime{Engine: substrate.CidAura, Data: hex.EncodeToString(data)})
 	require.NoError(t, err)
-	author, err := authorFromDigest(raw, []string{account})
+	author, err = authorFromDigest(raw, []string{account})
 	require.NoError(t, err)
 	require.Equal(t, account, author)
 }

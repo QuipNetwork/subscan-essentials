@@ -198,8 +198,13 @@ metadata. Block body/event decoding still uses parent execution metadata. At a
 session boundary the author index maps through the block's new validator order;
 the old session-number-only SQL cache is no longer used. This follows Quip's
 BABE/session mapping (`pallet_session::FindAccountFromAuthorIndex`); BABE's session
-hook installs the new epoch authorities during initialization. Only BABE and Aura
-pre-runtime digests are supported. Missing/ambiguous/unsupported digests and invalid
+hook installs the new epoch authorities during initialization. Only the pinned Quip
+hybrid BABE (840-byte primary/secondary-VRF and
+13-byte secondary-plain) and Aura pre-runtime digests are supported; classical
+109-byte BABE VRF payloads are not accepted as Quip proofs. See
+[testdata/quip-babe](../testdata/quip-babe/README.md) for SDK-generated proof
+fixtures, parser boundaries, and the native runtime session-transition check.
+Missing/ambiguous/unsupported digests and invalid
 author indices produce unknown, never an inferred account or an ingestion panic.
 
 RPC null for a metadata `Default` entry decodes its fallback (including legitimate

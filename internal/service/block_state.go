@@ -243,8 +243,8 @@ func authorFromDigest(raw []byte, validators []string) (string, error) {
 		}
 		index = binary.LittleEndian.Uint64(data) % uint64(len(validators))
 	case substrate.CidBabe:
-		if len(data) == 0 || !((data[0] == 2 && len(data) == 13) || ((data[0] == 1 || data[0] == 3) && len(data) == 109)) {
-			return "", fmt.Errorf("invalid BABE digest")
+		if err := validateQuipBabeDigest(data); err != nil {
+			return "", err
 		}
 		index = uint64(binary.LittleEndian.Uint32(data[1:5]))
 	default:
@@ -257,4 +257,32 @@ func authorFromDigest(raw []byte, validators []string) (string, error) {
 		return "", fmt.Errorf("invalid validator account")
 	}
 	return address.Format(validators[index]), nil
+}
+
+// Pinned Quip SDK 845eb998: PreDigest = tag + u32 index + u64 slot;
+// primary/secondary-VRF additionally carry sr25519 (32+64 bytes) and a
+// fixed 731-byte PQ field. This is the SCALE struct envelope, not the shorter
+// variable-length library proof. Classical 109-byte payloads are not Quip VRF
+// payloads. See testdata/quip-babe for SDK-generated, verified examples.
+// The finalized node validates cryptography; we validate the supported layout
+// and the SDK library_proof zero-padding invariant before extracting the index.
+func validateQuipBabeDigest(data []byte) error {
+	const prefixLen = 1 + 4 + 8
+	const nativeVRFLen = 32 + 64
+	const pqFieldLen = 731
+	const minBindingLen = 1 + 411 // delta byte + rc9 MIN_FALCON512_SIG_LEN
+	if len(data) == prefixLen && data[0] == 2 {
+		return nil
+	}
+	if len(data) != prefixLen+nativeVRFLen+pqFieldLen || (data[0] != 1 && data[0] != 3) {
+		return fmt.Errorf("unsupported or malformed Quip BABE digest")
+	}
+	pq := data[prefixLen+nativeVRFLen:]
+	bindingLen := minBindingLen + int(pq[0])
+	for _, padding := range pq[bindingLen:] {
+		if padding != 0 {
+			return fmt.Errorf("nonzero Quip BABE VRF padding")
+		}
+	}
+	return nil
 }
