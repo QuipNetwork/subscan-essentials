@@ -2,12 +2,12 @@ package dao
 
 import (
 	"context"
+	"fmt"
+
 	"github.com/itering/subscan-plugin/storage"
 	"github.com/itering/subscan/model"
 	bModel "github.com/itering/subscan/plugins/balance/model"
 	"github.com/itering/subscan/util/address"
-	"github.com/itering/substrate-api-rpc/rpc"
-	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -59,42 +59,63 @@ func GetAccountByAddress(ctx context.Context, db storage.DB, address string) *bM
 
 }
 
-func RefreshAccount(ctx context.Context, s *Storage, accountId string) error {
-	accountId = address.Format(accountId)
-	if accountId == "" {
+func RefreshAccount(ctx context.Context, s *Storage, block *storage.Block, accountID string) error {
+	accountID = address.Format(accountID)
+	if accountID == "" {
 		return nil
 	}
-	db := s.Dao.GetDbInstance().(*gorm.DB)
-	var account = bModel.Account{Address: accountId}
-	if err := withCounts(ctx, s, func(tx *gorm.DB, counts *bModel.ProjectionCounts) error {
-		q := tx.Scopes(model.IgnoreDuplicate).Where("address = ?", accountId).FirstOrCreate(&account)
+	observation := ReadAccountState(ctx, block, accountID)
+	return PersistAccountState(ctx, s, accountID, observation)
+}
+
+// PersistAccountState stores the historical observation and updates the latest
+// view atomically. No RPC is performed while the SQL/count-row lock is held.
+// A newer unknown observation clears stale amounts; an older retry never rolls
+// back the view. At the same hash, known state cannot be downgraded by a failure.
+func PersistAccountState(ctx context.Context, s *Storage, accountID string, state bModel.AccountState) error {
+	if state.StateStatus != model.StateAvailable {
+		state.Nonce, state.Balance, state.Locked, state.Reserved = nil, nil, nil, nil
+	}
+	err := withCounts(ctx, s, func(tx *gorm.DB, counts *bModel.ProjectionCounts) error {
+		account := bModel.Account{Address: accountID}
+		q := tx.Scopes(model.IgnoreDuplicate).Where("address = ?", accountID).FirstOrCreate(&account)
 		if q.Error != nil {
 			return q.Error
 		}
 		counts.Accounts += q.RowsAffected
-		return nil
-	}); err != nil {
-		return err
-	}
-	if err := SyncCounts(ctx, s); err != nil {
-		return err
-	}
-	return AfterAccountCreate(ctx, db, &account)
-}
-
-func AfterAccountCreate(ctx context.Context, db *gorm.DB, account *bModel.Account) error {
-	accountDataRaw, err := rpc.ReadStorage(nil, "system", "account", "", account.Address)
+		observation := bModel.AccountObservation{Address: accountID, ObservationHash: state.StateHash, AccountState: state}
+		// The count lock serializes writers, including retries of the same account.
+		var prior bModel.AccountObservation
+		q = tx.Where("address = ? AND observation_hash = ?", accountID, state.StateHash).Limit(1).Find(&prior)
+		if q.Error != nil {
+			return q.Error
+		}
+		if q.RowsAffected > 0 && prior.StateStatus != model.StateUnknown && state.StateStatus == model.StateUnknown {
+			state = prior.AccountState
+		} else {
+			if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&observation).Error; err != nil {
+				return err
+			}
+		}
+		if account.StateBlockNum != nil && (state.StateBlockNum == nil || *account.StateBlockNum > *state.StateBlockNum) {
+			return nil
+		}
+		if account.StateBlockNum != nil && state.StateBlockNum != nil && *account.StateBlockNum == *state.StateBlockNum && account.StateHash != state.StateHash {
+			return fmt.Errorf("conflicting finalized account state at block %d", *state.StateBlockNum)
+		}
+		if account.StateHash == state.StateHash && account.StateStatus != "" && account.StateStatus != model.StateUnknown && state.StateStatus == model.StateUnknown {
+			return nil
+		}
+		return tx.Model(&account).Updates(map[string]interface{}{
+			"nonce": state.Nonce, "balance": state.Balance, "locked": state.Locked, "reserved": state.Reserved,
+			"state_status": state.StateStatus, "state_hash": state.StateHash, "state_block_num": state.StateBlockNum,
+			"state_spec_version": state.StateSpecVersion, "state_error": state.StateError,
+		}).Error
+	})
 	if err != nil {
 		return err
 	}
-	accountData := new(bModel.AccountData)
-	accountDataRaw.ToAny(accountData)
-	return db.WithContext(ctx).Model(account).Where("address = ?", account.Address).UpdateColumns(map[string]interface{}{
-		"nonce":    accountData.Nonce,
-		"balance":  accountData.Data.Free.Add(accountData.Data.Reserved),
-		"locked":   decimal.Max(accountData.Data.MiscFrozen, accountData.Data.FeeFrozen),
-		"reserved": accountData.Data.Reserved,
-	}).Error
+	return SyncCounts(ctx, s)
 }
 
 func (s *Storage) AddOrUpdateItem(c context.Context, item interface{}, keys []string, updates ...string) *gorm.DB {

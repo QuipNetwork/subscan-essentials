@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func CreateTransfer(ctx context.Context, d *Storage, transfer *bModel.Transfer) error {
+func CreateTransfer(ctx context.Context, d *Storage, transfer *bModel.Transfer, block *storage.Block) error {
 	if err := withCounts(ctx, d, func(tx *gorm.DB, counts *bModel.ProjectionCounts) error {
 		query := tx.Scopes(model.IgnoreDuplicate).Create(transfer)
 		if query.Error != nil {
@@ -24,8 +24,8 @@ func CreateTransfer(ctx context.Context, d *Storage, transfer *bModel.Transfer) 
 	if err := SyncCounts(ctx, d); err != nil {
 		return err
 	}
-	senderErr := RefreshAccount(ctx, d, model.CheckoutParamValueAddress(transfer.Sender))
-	receiverErr := RefreshAccount(ctx, d, model.CheckoutParamValueAddress(transfer.Receiver))
+	senderErr := RefreshAccount(ctx, d, block, model.CheckoutParamValueAddress(transfer.Sender))
+	receiverErr := RefreshAccount(ctx, d, block, model.CheckoutParamValueAddress(transfer.Receiver))
 	return errors.Join(senderErr, receiverErr)
 }
 

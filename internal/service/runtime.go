@@ -3,12 +3,11 @@ package service
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 
-	scalecodec "github.com/itering/scale.go"
+	"github.com/itering/subscan/share/state"
 	"github.com/itering/subscan/util"
 	"github.com/itering/substrate-api-rpc/metadata"
 	rpcmodel "github.com/itering/substrate-api-rpc/model"
@@ -41,33 +40,7 @@ func executionStateHash(hash string, block *rpcmodel.Block) (string, uint, error
 }
 
 func runtimeVersionAt(conn websocket.WsConn, hash string) (*rpcmodel.RuntimeVersion, error) {
-	v := &rpcmodel.JsonRpcResult{}
-	if err := websocket.SendWsRequest(conn, v, rpc.StateGetRuntimeVersion(wsSpec, hash)); err != nil {
-		return nil, err
-	}
-	// Do not use ToRuntimeVersion's unchecked map assertion or infer a missing
-	// runtime from the latest spec/nearby block (unsafe at upgrade boundaries).
-	var required struct {
-		SpecVersion *int `json:"specVersion"`
-	}
-	if err := v.CheckErr(); err != nil {
-		return nil, err
-	}
-	encoded, err := json.Marshal(v.Result)
-	if err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(encoded, &required); err != nil {
-		return nil, err
-	}
-	if required.SpecVersion == nil || *required.SpecVersion < 0 {
-		return nil, fmt.Errorf("missing or invalid specVersion at %s", hash)
-	}
-	var runtime rpcmodel.RuntimeVersion
-	if err := json.Unmarshal(encoded, &runtime); err != nil {
-		return nil, err
-	}
-	return &runtime, nil
+	return state.RuntimeVersionAt(conn, hash)
 }
 
 func (s *Service) regRuntimeVersion(ctx context.Context, name string, spec int, blockNum uint, hash string) error {
@@ -136,28 +109,8 @@ func (s *Service) getMetadataInstant(spec int, hash string) (*metadata.Instant, 
 	return registerCheckedMetadata(raw)
 }
 
-func registerCheckedMetadata(raw *metadata.RuntimeRaw) (instant *metadata.Instant, err error) {
-	// The dependency registration helper ignores decoding errors and can panic.
-	// Validate before publishing anything in its global runtime cache.
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			instant = nil
-			err = fmt.Errorf("metadata spec %d: %v", raw.Spec, recovered)
-		}
-	}()
-	data, err := hex.DecodeString(strings.TrimPrefix(raw.Raw, "0x"))
-	if err != nil {
-		return nil, fmt.Errorf("metadata spec %d hex: %w", raw.Spec, err)
-	}
-	decoder := scalecodec.MetadataDecoder{}
-	decoder.Init(data)
-	if err := decoder.Process(); err != nil {
-		return nil, fmt.Errorf("metadata spec %d: %w", raw.Spec, err)
-	}
-	if decoder.Data.GetRemainingLength() != 0 {
-		return nil, fmt.Errorf("metadata spec %d has trailing bytes", raw.Spec)
-	}
-	return metadata.RegNewMetadataType(raw.Spec, raw.Raw), nil
+func registerCheckedMetadata(raw *metadata.RuntimeRaw) (*metadata.Instant, error) {
+	return state.RegisterCheckedMetadata(raw)
 }
 
 func (s *Service) registerBlockRuntimes(ctx context.Context, conn websocket.WsConn, blockNum uint, blockHash, executionHash string) (*rpcmodel.RuntimeVersion, error) {

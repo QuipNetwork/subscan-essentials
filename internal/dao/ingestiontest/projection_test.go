@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -83,7 +85,8 @@ func (p *crashBalance) ProcessEvent(block *storage.Block, event *storage.Event, 
 
 // Only synthetic System.Account responses for the two named test addresses are
 // served by this responder; these values do not represent historical chain state.
-func accountRPC(t *testing.T, addresses ...string) {
+func accountRPC(t *testing.T, addresses ...string) *atomic.Bool {
+	var unavailable atomic.Bool
 	t.Helper()
 	m := metadata.RegNewMetadataType(900100, "0x6d6574610d000400")
 	types.RegCustomTypes(map[string]source.TypeStruct{
@@ -107,19 +110,41 @@ func accountRPC(t *testing.T, addresses ...string) {
 		defer conn.Close()
 		for {
 			var req struct {
-				ID     interface{} `json:"id"`
-				Method string      `json:"method"`
-				Params []string    `json:"params"`
+				ID     interface{}   `json:"id"`
+				Method string        `json:"method"`
+				Params []interface{} `json:"params"`
 			}
 			if err := conn.ReadJSON(&req); err != nil {
 				return
 			}
 			response := map[string]interface{}{"jsonrpc": "2.0", "id": req.ID}
-			if req.Method != "state_getStorage" || len(req.Params) != 1 || !allowed[req.Params[0]] {
+			if req.Method == "state_getRuntimeVersion" && len(req.Params) == 1 && req.Params[0] == "0x"+strings.Repeat("42", 32) {
+				response["result"] = map[string]interface{}{"specVersion": 900100}
+			} else if req.Method == "state_getKeysPaged" && len(req.Params) == 4 && req.Params[1] == float64(256) && req.Params[3] == "0x"+strings.Repeat("42", 32) {
+				var keys []string
+				for key := range allowed {
+					if strings.HasPrefix(key, fmt.Sprint(req.Params[0])) && key > fmt.Sprint(req.Params[2]) {
+						keys = append(keys, key)
+					}
+				}
+				sort.Strings(keys)
+				// Deliberately short pages prove the command continues until an empty page.
+				if len(keys) > 1 {
+					keys = keys[:1]
+				}
+				if keys == nil {
+					keys = []string{}
+				}
+				response["result"] = keys
+			} else if req.Method != "state_getStorageAt" || len(req.Params) != 2 || req.Params[1] != "0x"+strings.Repeat("42", 32) || !allowed[fmt.Sprint(req.Params[0])] {
 				unexpected.Add(1)
 				response["error"] = map[string]interface{}{"code": -32601, "message": "unexpected synthetic RPC request"}
 			} else {
 				response["result"] = "0x" + hex.EncodeToString(raw)
+			}
+			if unavailable.Load() {
+				delete(response, "result")
+				response["error"] = map[string]interface{}{"code": -32000, "message": "historical state pruned"}
 			}
 			if err := conn.WriteJSON(response); err != nil {
 				return
@@ -129,6 +154,7 @@ func accountRPC(t *testing.T, addresses ...string) {
 	websocket.Close()
 	websocket.SetEndpoint("ws" + strings.TrimPrefix(server.URL, "http"))
 	t.Cleanup(func() { websocket.Close(); server.Close(); require.Zero(t, unexpected.Load()) })
+	return &unavailable
 }
 
 func TestPluginProjectionRecovery(t *testing.T) {
@@ -168,7 +194,7 @@ func TestPluginProjectionRecovery(t *testing.T) {
 	t.Cleanup(func() { d.DbRollback(tx) })
 	require.NoError(t, d.CreateEvent(tx, []model.ChainEvent{event}))
 	require.NoError(t, d.CreateExtrinsic(ctx, tx, []model.ChainExtrinsic{{ID: 4200000, BlockNum: 42, ExtrinsicIndex: "42-0", CallModule: "Balances", CallModuleFunction: "transfer", Success: true}}, 0))
-	require.NoError(t, d.CreateBlock(ctx, tx, &model.ChainBlock{ID: 42, BlockNum: 42, Hash: "hash42", Finalized: true, ExtrinsicsCount: 1, EventCount: 1}))
+	require.NoError(t, d.CreateBlock(ctx, tx, &model.ChainBlock{ID: 42, BlockNum: 42, Hash: "0x" + strings.Repeat("42", 32), Finalized: true, ExtrinsicsCount: 1, EventCount: 1}))
 	require.NoError(t, d.CreatePluginProjections(tx, tasks))
 	pending, err := d.PendingPluginProjections(ctx, nil, 256)
 	require.NoError(t, err)
@@ -282,7 +308,9 @@ func TestPluginProjectionRecovery(t *testing.T) {
 	require.Len(t, accounts, 2)
 	for _, account := range accounts {
 		require.Equal(t, "100", account.Balance.String())
-		require.Equal(t, 2, account.Nonce)
+		require.Equal(t, uint32(2), *account.Nonce)
+		require.Equal(t, "available", account.StateStatus)
+		require.Equal(t, "0x"+strings.Repeat("42", 32), account.StateHash)
 	}
 	// Exercise the actual balance HTTP handler, not a hand-built response.
 	handled := false

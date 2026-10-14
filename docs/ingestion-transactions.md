@@ -217,5 +217,43 @@ Strict lengths guard the legacy SCALE decoder's zero padding of truncated intege
 and AccountIds. Validator vectors are specifically checked as Quip AccountId32
 vectors. This does not generalize the SDK's storage decoder or change its API.
 
-Account state availability, UI compatibility and actual-image acceptance remain
-separate gates; these observations do not establish them.
+Account state has its own contract below. UI compatibility and actual-image
+acceptance remain separate gates; session observations do not establish them.
+
+### Account observations
+
+Balance account list/detail now expose nullable `nonce`, `balance`, `locked`,
+`reserved`, plus `state_status` (`available`, `absent`, `unknown`), `state_hash`,
+`state_block_num`, `state_spec_version`, and `state_error`. Available zero remains
+numeric nonce `0` and amount string `"0"`; unavailable amounts and nonce are JSON
+`null`. Legacy rows without provenance normalize to unknown at serialization;
+there is no automatic claim that their old values describe historical state.
+
+Balance-event projections read System.Account at their finalized block hash.
+They resolve its **post-state** runtime separately from the block's execution
+spec, and use that metadata's storage prefix, map hasher, value type and fallback.
+A missing Default value decodes the metadata fallback; Optional null is absent.
+RPC errors, missing results/metadata, unsupported schema and malformed bytes are
+unknown. SCALE values must consume and re-encode the entire response exactly to
+reject the legacy decoder's integer padding. Nonce is checked as u32 and each
+balance as u128; both modern `frozen` and legacy `miscFrozen`/`feeFrozen` fields
+are supported. No latest-state fallback or silent JSON decoding is used.
+
+Every address/hash observation is retained in `balance_account_observations`.
+Its SQL write and the current account view update are atomic with account counts.
+The current view advances by block number: an older retry cannot roll it back,
+a newer unknown clears stale values, and a same-hash unknown cannot downgrade an
+already available/absent observation. An explicit same-hash replay can recover
+unknown state later. Conflicting finalized hashes at the same height fail rather
+than silently replacing a view. This is the latest *observed* account state, not
+an assertion that every account has been refreshed at chain head.
+
+RPC happens before the account transaction. Once an unknown observation is
+persisted, the projection can complete; unavailable historical state does not
+cause endless automatic retries. SQL/Redis failures still leave projections
+pending. `InitAccount` pins the finalized height reported by the storage DAO,
+requires that block to be indexed, and enumerates/reads at its hash, and `InitTransfer` passes the original finalized blocks
+when replaying events. Neither command reads unpinned latest account values.
+Real archived auxiliary replay, UI rendering and actual-image acceptance remain
+integration work; synthetic account values in unit tests are not historical
+account evidence.

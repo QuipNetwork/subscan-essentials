@@ -18,6 +18,9 @@ type Storage struct {
 }
 
 func EmitEvent(ctx context.Context, d *Storage, event *storage.Event, block *storage.Block) error {
+	if block == nil || block.BlockNum != event.BlockNum {
+		return fmt.Errorf("account event block unavailable or mismatched")
+	}
 	var paramEvent []storage.EventParam
 	if err := util.UnmarshalAny(&paramEvent, event.Params); err != nil {
 		return err
@@ -28,7 +31,7 @@ func EmitEvent(ctx context.Context, d *Storage, event *storage.Event, block *sto
 		if len(paramEvent) < 1 {
 			return fmt.Errorf("%s event missing account", event.EventId)
 		}
-		return RefreshAccount(ctx, d, model.CheckoutParamValueAddress(paramEvent[0].Value))
+		return RefreshAccount(ctx, d, block, model.CheckoutParamValueAddress(paramEvent[0].Value))
 		// ["AccountId","AccountId","Balance"]
 	case "Transfer":
 		if len(paramEvent) < 3 {
@@ -51,7 +54,7 @@ func EmitEvent(ctx context.Context, d *Storage, event *storage.Event, block *sto
 			Symbol:         t.Symbol,
 			TokenId:        t.TokenId,
 			ExtrinsicIndex: fmt.Sprintf("%d-%d", event.BlockNum, event.ExtrinsicIdx),
-		})
+		}, block)
 	}
 	return nil
 }
