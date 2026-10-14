@@ -19,7 +19,6 @@ func (s *Service) CreateChainBlock(ctx context.Context, hash string, block *smod
 		decodeExtrinsics []map[string]interface{}
 		decodeEvent      interface{}
 		logs             []storage.DecoderLog
-		codecErr         error
 	)
 
 	blockNum := util.StringToUInt(util.HexToNumStr(block.Header.Number))
@@ -28,30 +27,28 @@ func (s *Service) CreateChainBlock(ctx context.Context, hash string, block *smod
 	// Extrinsic
 	decodeExtrinsics, err = substrate.DecodeExtrinsic(block.Extrinsics, metadataInstant, spec)
 	if err != nil {
-		codecErr = err
-		util.Logger().Error(err)
+		return fmt.Errorf("block %d decode: %w", blockNum, err)
 	}
 	// event
 	decodeEvent, err = substrate.DecodeEvent(event, metadataInstant, spec)
 	if err != nil {
-		codecErr = err
-		util.Logger().Error(err)
+		return fmt.Errorf("block %d decode: %w", blockNum, err)
 	}
 
 	// log
 	logs, err = substrate.DecodeLogDigest(block.Header.Digest.Logs)
 	if err != nil {
-		codecErr = err
-		util.Logger().Error(err)
+		return fmt.Errorf("block %d decode: %w", blockNum, err)
+	}
+
+	extrinsics, events, err := convertBlockData(block.Extrinsics, event, decodeExtrinsics, decodeEvent)
+	if err != nil {
+		return fmt.Errorf("block %d: %w", blockNum, err)
 	}
 
 	s.dao.SplitBlockTable(blockNum)
-
 	txn := s.dao.DbBegin()
 	defer s.dao.DbRollback(txn)
-
-	var events []model.ChainEvent
-	_ = util.UnmarshalAny(&events, decodeEvent)
 
 	eventMap := s.checkoutExtrinsicEvents(events, blockNum)
 
@@ -66,8 +63,6 @@ func (s *Service) CreateChainBlock(ctx context.Context, hash string, block *smod
 		Finalized:      true,
 	}
 
-	var extrinsics []model.ChainExtrinsic
-	_ = util.UnmarshalAny(&extrinsics, decodeExtrinsics)
 	extrinsics = s.fillExtrinsicHash(blockNum, extrinsics, block.Extrinsics)
 	cb.BlockTimestamp = FindOutBlockTime(extrinsics)
 	err = s.createExtrinsic(ctx, txn, &cb, extrinsics, block.Extrinsics, eventMap)
@@ -85,7 +80,6 @@ func (s *Service) CreateChainBlock(ctx context.Context, hash string, block *smod
 	}
 
 	cb.Validator = s.blockAuthor(ctx, cb.ParentHash, events, runtimeLogData, sessionIndex)
-	cb.CodecError = codecErr != nil
 	cb.ExtrinsicsCount = len(extrinsics)
 	cb.EventCount = len(events)
 
@@ -113,6 +107,9 @@ func (s *Service) CreateChainBlock(ctx context.Context, hash string, block *smod
 func (s *Service) checkoutExtrinsicEvents(e []model.ChainEvent, blockNumInt uint) map[string][]model.ChainEvent {
 	eventMap := make(map[string][]model.ChainEvent)
 	for _, event := range e {
+		if event.Phase != 0 {
+			continue
+		}
 		extrinsicIndex := fmt.Sprintf("%d-%d", blockNumInt, event.ExtrinsicIdx)
 		eventMap[extrinsicIndex] = append(eventMap[extrinsicIndex], event)
 	}
@@ -153,10 +150,10 @@ func (s *Service) SessionIndex(hash string) uint {
 func (s *Service) fillExtrinsicHash(blockNum uint, extrinsicList []model.ChainExtrinsic, extrinsicRaws []string) []model.ChainExtrinsic {
 	for i, e := range extrinsicList {
 		extrinsicList[i].BlockNum = blockNum
-		if e.ExtrinsicHash == "" {
+		if util.TrimHex(e.ExtrinsicHash) == "" {
 			extrinsicList[i].ExtrinsicHash = util.AddHex(util.BytesToHex(hasher.HashByCryptoName(util.HexToBytes(extrinsicRaws[i]), "Blake2_256")))
 		}
-		extrinsicList[i].ExtrinsicIndex = fmt.Sprintf("%d-%d", e.BlockNum, i)
+		extrinsicList[i].ExtrinsicIndex = fmt.Sprintf("%d-%d", blockNum, i)
 	}
 	return extrinsicList
 }

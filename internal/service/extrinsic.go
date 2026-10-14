@@ -30,8 +30,7 @@ func (s *Service) createExtrinsic(ctx context.Context,
 		extrinsics[index].ExtrinsicHash = util.AddHex(extrinsic.ExtrinsicHash)
 		extrinsics[index].ParamsRawBytes = util.HexToBytes(extrinsic.ParamsRaw)
 		extrinsics[index].Params = nil
-		if extrinsic.Signature != "" {
-			extrinsics[index].IsSigned = true
+		if extrinsic.IsSigned {
 			countSignedExtrinsic++
 			weight, actualFee, isV2Weight := model.CheckoutWeight(eventMap[extrinsics[index].ExtrinsicIndex])
 			extrinsics[index].Fee, extrinsics[index].UsedFee, err = GetExtrinsicFee(ctx, encodeExtrinsics[index], block.ParentHash, block.SpecVersion, weight, actualFee, isV2Weight)

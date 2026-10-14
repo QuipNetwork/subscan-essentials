@@ -19,6 +19,11 @@ func TestService_createExtrinsic(t *testing.T) {
 	assert.NoError(t, err)
 	var extrinsics []model.ChainExtrinsic
 	_ = util.UnmarshalAny(&extrinsics, decodeExtrinsics)
+	for index := range extrinsics {
+		version, err := extrinsicWireVersion(encodeExtrinsic[index])
+		assert.NoError(t, err)
+		extrinsics[index].IsSigned = version == 0x84 || version == 0x85
+	}
 	err = testSrv.createExtrinsic(ctx, txn, &testBlock, extrinsics, encodeExtrinsic, nil)
 	assert.NoError(t, err)
 
