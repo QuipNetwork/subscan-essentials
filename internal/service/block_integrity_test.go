@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/itering/scale.go/types"
@@ -106,7 +107,7 @@ func integrityInputs(t *testing.T) (*smodel.Block, string, *metadata.Instant) {
 			Module: types.MetadataModules{Name: "Example"}, Call: types.MetadataEvents{Name: "Ready"},
 		}},
 	}
-	block := &smodel.Block{Header: smodel.ChainNewHeadResult{Number: "0x2a"}}
+	block := &smodel.Block{Header: smodel.ChainNewHeadResult{Number: "0x2a", ParentHash: "0x" + strings.Repeat("1", 64)}}
 	events := []byte{12} // Vec length 3
 	for index := 0; index < 3; index++ {
 		raw := []byte{28, 4, 0, 0, 0, 0, 0, 0}

@@ -53,7 +53,8 @@ func TestService_CreateChainBlock(t *testing.T) {
 		// defines Weight as u32. Metadata V11 names DispatchInfo without
 		// supplying a portable definition that could resolve that mismatch.
 		// Previously CreateChainBlock logged the failure and returned success.
-		m := testSrv.getMetadataInstant(4, "")
+		m, metadataErr := testSrv.getMetadataInstant(4, "")
+		require.NoError(t, metadataErr)
 		require.Equal(t, 11, m.MetadataVersion)
 		require.Equal(t, []string{"DispatchInfo"}, m.EventIndex["0000"].Call.Args)
 		decoded, err := substrate.DecodeExtrinsic(block.Extrinsics, m, 4)

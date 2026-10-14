@@ -21,8 +21,14 @@ func (s *Service) CreateChainBlock(ctx context.Context, hash string, block *smod
 		logs             []storage.DecoderLog
 	)
 
-	blockNum := util.StringToUInt(util.HexToNumStr(block.Header.Number))
-	metadataInstant := s.getMetadataInstant(spec, hash)
+	executionHash, blockNum, err := executionStateHash(hash, block)
+	if err != nil {
+		return err
+	}
+	metadataInstant, err := s.getMetadataInstant(spec, executionHash)
+	if err != nil {
+		return fmt.Errorf("block %d execution metadata: %w", blockNum, err)
+	}
 
 	// Extrinsic
 	decodeExtrinsics, err = substrate.DecodeExtrinsic(block.Extrinsics, metadataInstant, spec)

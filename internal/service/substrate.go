@@ -114,7 +114,12 @@ func (s *Service) FillBlockData(ctx context.Context, blockNum uint, force bool) 
 		return s.completeCoreBlock(ctx, blockNum)
 	}
 
-	conn := s.dbStorage.RPCPool().Conn
+	connection, err := websocket.Init()
+	if err != nil {
+		return fmt.Errorf("block RPC connection: %w", err)
+	}
+	defer connection.Close()
+	conn := connection.Conn
 	now := time.Now()
 	v := &model.JsonRpcResult{}
 
@@ -136,35 +141,34 @@ func (s *Service) FillBlockData(ctx context.Context, blockNum uint, force bool) 
 	if rpcBlock == nil {
 		return errors.New("nil block data")
 	}
+	executionHash, headerNum, err := executionStateHash(blockHash, &rpcBlock.Block)
+	if err != nil {
+		return err
+	}
+	if headerNum != blockNum {
+		return fmt.Errorf("requested block %d, received header %d", blockNum, headerNum)
+	}
 
 	// event
 	if err = websocket.SendWsRequest(conn, v, rpc.StateGetStorage(wsEvent, util.EventStorageKey, blockHash)); err != nil {
 		return fmt.Errorf("websocket send error: %v", err)
 	}
-	event, _ := v.ToString()
-	if event == "" && blockNum > 0 {
-		return errors.New("nil event data")
+	event, err := v.ToString()
+	if err != nil {
+		return fmt.Errorf("block %d event storage: %w", blockNum, err)
+	}
+	if event == "" {
+		if blockNum != 0 || len(rpcBlock.Block.Extrinsics) != 0 {
+			return errors.New("nil event data")
+		}
+		// Genesis has no executed body or events; absent event storage is the
+		// empty vector, not a request to decode with a zero parent hash.
+		event = "0x00"
 	}
 
-	// runtime
-	if err = websocket.SendWsRequest(conn, v, rpc.ChainGetRuntimeVersion(wsSpec, blockHash)); err != nil {
-		return fmt.Errorf("websocket send error: %v", err)
-	}
-	var specVersion int
-
-	if r := v.ToRuntimeVersion(); r == nil {
-		specVersion = s.GetCurrentRuntimeSpecVersion(blockNum)
-	} else {
-		specVersion = r.SpecVersion
-		_ = s.regRuntimeVersion(ctx, r.ImplName, specVersion, blockNum, blockHash)
-	}
-
-	if specVersion > util.CurrentRuntimeSpecVersion {
-		util.CurrentRuntimeSpecVersion = specVersion
-	}
-
-	if specVersion == -1 {
-		return errors.New("nil runtime version")
+	execution, err := s.registerBlockRuntimes(ctx, conn, blockNum, blockHash, executionHash)
+	if err != nil {
+		return err
 	}
 
 	// session index
@@ -182,7 +186,7 @@ func (s *Service) FillBlockData(ctx context.Context, blockNum uint, force bool) 
 	}
 
 	// for Create
-	if err = s.CreateChainBlock(ctx, blockHash, &rpcBlock.Block, event, specVersion, sessionIndex); err == nil {
+	if err = s.CreateChainBlock(ctx, blockHash, &rpcBlock.Block, event, execution.SpecVersion, sessionIndex); err == nil {
 		util.Logger().Debug(fmt.Sprintf("Fill Block num %d hash %s use %d ms", blockNum, blockHash, time.Since(now).Milliseconds()))
 	} else {
 		log.Printf("Create chain block error %v", err)

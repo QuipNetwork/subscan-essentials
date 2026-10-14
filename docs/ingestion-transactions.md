@@ -89,3 +89,51 @@ EVM endpoint before tests run; these tests do not establish EVM-disabled startup
 The suite avoids the legacy DAO package test initializer that
 truncates configured tables. These are focused native storage tests; the actual
 linux/amd64 image and controlled chain-fixture DB/API acceptance are separate.
+
+## Execution runtime at upgrade boundaries
+
+`FillBlockData` reads the body and event storage at the block hash, but selects
+the execution runtime with `state_getRuntimeVersion(parentHash)`. Metadata cache
+misses use that same parent hash. `ChainBlock.SpecVersion` records this execution
+version, including for later plugin event/error interpretation. The runtime
+installed in the block's post-state is registered separately at the block height;
+it does not select this block's decoder. Runtime records refer to observed state
+heights (the parent height for execution metadata), not inferred activation
+heights across missing history. Existing metadata caches remain keyed by spec
+version within the configured chain.
+
+Genesis uses its own hash, never its zero parent. An empty genesis body with
+absent event storage is treated as an empty event vector. Missing parent hashes,
+mismatched block heights, unavailable/malformed runtime responses, and invalid
+metadata fail before core block writes. There is no latest/nearby-runtime fallback.
+Runtime metadata registration is preparatory state outside the core block
+transaction; it may remain after a later block decode or transaction failure.
+
+The local synthetic WebSocket tests exercise `FillBlockData` with different
+parent/post call indexes and argument types, ordinary blocks, genesis, failed
+runtime/metadata reads, and direct `CreateChainBlock` metadata cache misses.
+The opt-in archive test uses the byte-exact shared fixture from validator commit
+`52a9070944d4cd2319a5cddcd2da1d8eb0a63abc`, verifies its manifest and input hashes,
+and checks that block 330109's eight extrinsics and 36 events decode under runtime
+117 while post-state runtime 118 is registered separately. Run it with the
+reviewed decoder forks selected by a temporary module file. The test responder
+serves the captured V16 bytes through the loader's metadata request; it is a
+selection/decoding regression, not evidence of metadata-version negotiation by
+the deployed image.
+
+```sh
+test_mod_dir=$(mktemp -d)
+cp go.mod go.sum "$test_mod_dir/"
+go mod edit -modfile="$test_mod_dir/go.mod" \
+  -replace="github.com/itering/scale.go=$(cd ../scale.go && pwd)" \
+  -replace="github.com/itering/substrate-api-rpc=$(cd ../substrate-api-rpc && pwd)"
+ETH_RPC=http://127.0.0.1:1 \
+QUIP_CONFORMANCE_FIXTURES="$(cd ../scale.go/testdata/quip-metadata-conformance && pwd)" \
+go test -mod=mod -modfile="$test_mod_dir/go.mod" ./internal/service \
+  -run TestArchivedUpgradeExecutionRuntime -count=1
+rm -r "$test_mod_dir"
+```
+
+`ETH_RPC` directs the existing import-time EVM probe to a closed loopback port;
+it does not establish EVM-disabled application startup. Fee/session/account/author
+availability semantics and the full-image DB/API replay remain separate gates.
