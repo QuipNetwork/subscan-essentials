@@ -81,15 +81,23 @@ func FindOutBlockTime(extrinsics []model.ChainExtrinsic) int {
 	return 0
 }
 
-func (s *Service) getExtrinsicSuccess(e []model.ChainEvent) bool {
-	for _, event := range e {
-		if strings.EqualFold(event.ModuleId, "system") {
-			if !strings.EqualFold(event.EventId, "ExtrinsicSuccess") || !strings.EqualFold(event.EventId, "ExtrinsicFailed") {
-				continue
-			} else {
-				return strings.EqualFold(event.EventId, "ExtrinsicSuccess")
-			}
+// getExtrinsicSuccess reports confirmed outer dispatch success. Missing or
+// ambiguous outcomes are not success; false alone is not proof of dispatch failure.
+func (s *Service) getExtrinsicSuccess(events []model.ChainEvent) bool {
+	seen, success := false, false
+	for _, event := range events {
+		if event.Phase != 0 || !strings.EqualFold(event.ModuleId, "system") {
+			continue
 		}
+		isSuccess := strings.EqualFold(event.EventId, "ExtrinsicSuccess")
+		isFailure := strings.EqualFold(event.EventId, "ExtrinsicFailed")
+		if !isSuccess && !isFailure {
+			continue
+		}
+		if seen {
+			return false
+		}
+		seen, success = true, isSuccess
 	}
-	return true
+	return seen && success
 }
