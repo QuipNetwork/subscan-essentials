@@ -89,29 +89,13 @@ func (s *Service) CreateChainBlock(ctx context.Context, hash string, block *smod
 	if err = s.dao.CreateBlock(ctx, txn, &cb); err != nil {
 		return err
 	}
+	if err = s.dao.CreatePluginProjections(txn, BuildPluginProjections(blockNum, events, extrinsics)); err != nil {
+		return err
+	}
 	if err = s.dao.DbCommit(txn); err != nil {
 		return fmt.Errorf("block %d commit: %w", blockNum, err)
 	}
-	// Core ingestion is complete. Queue delivery is best effort and must not
-	// turn a committed block into an ingestion failure or suppress progress.
-	for index := range events {
-		events[index].BlockNum = blockNum
-		if emitErr := s.emitEvent(&events[index]); emitErr != nil {
-			util.Logger().Error(fmt.Errorf("committed block %d event notification: %w", blockNum, emitErr))
-		}
-	}
-	for index := range extrinsics {
-		if emitErr := s.emitExtrinsic(ctx, &extrinsics[index]); emitErr != nil {
-			util.Logger().Error(fmt.Errorf("committed block %d extrinsic notification: %w", blockNum, emitErr))
-		}
-	}
-	if emitErr := s.emitBlock(ctx, &cb); emitErr != nil {
-		util.Logger().Error(fmt.Errorf("committed block %d notification: %w", blockNum, emitErr))
-	}
-	if err = s.dao.PublishBlockCompletion(ctx, blockNum); err != nil {
-		return fmt.Errorf("committed block %d publication: %w", blockNum, err)
-	}
-	return nil
+	return s.completeCoreBlock(ctx, blockNum)
 }
 
 func (s *Service) checkoutExtrinsicEvents(e []model.ChainEvent, blockNumInt uint) map[string][]model.ChainEvent {

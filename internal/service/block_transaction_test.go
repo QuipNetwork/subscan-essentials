@@ -37,6 +37,7 @@ func (d *transactionFaultDao) DbRollback(tx *dao.GormDB) {
 		clear(d.blocks)
 		clear(d.events)
 		clear(d.extrinsics)
+		d.projections = nil
 	}
 	d.blockIntegrityDao.DbRollback(tx)
 }
@@ -64,6 +65,12 @@ func (d *transactionFaultDao) CreateBlock(ctx context.Context, tx *dao.GormDB, r
 	}
 	return d.blockIntegrityDao.CreateBlock(ctx, tx, row)
 }
+func (d *transactionFaultDao) CreatePluginProjections(tx *dao.GormDB, rows []model.PluginProjection) error {
+	if d.fail == "projections" {
+		return transactionFault
+	}
+	return d.blockIntegrityDao.CreatePluginProjections(tx, rows)
+}
 func (d *transactionFaultDao) PublishBlockCompletion(context.Context, uint) error {
 	if !d.committed {
 		return errors.New("publication before commit")
@@ -85,7 +92,7 @@ type failingNotificationQueue struct {
 	blockIntegrityQueue
 }
 
-func (q *failingNotificationQueue) Publish(a, b string, c interface{}) error {
+func (q *failingNotificationQueue) ForcePublish(a, b string, c interface{}) error {
 	if err := q.blockIntegrityQueue.Publish(a, b, c); err != nil {
 		return err
 	}
@@ -104,7 +111,7 @@ func TestBlockTransactionCompletion(t *testing.T) {
 			metadata.RuntimeMetadata[spec] = previous
 		}
 	})
-	for _, fail := range []string{"begin", "extrinsics", "events", "logs", "block", "commit", "publication", "notification"} {
+	for _, fail := range []string{"begin", "extrinsics", "events", "logs", "block", "projections", "commit", "publication", "enqueue"} {
 		t.Run(fail, func(t *testing.T) {
 			d := &transactionFaultDao{blockIntegrityDao: blockIntegrityDao{
 				blocks: map[uint]model.ChainBlock{}, events: map[uint]model.ChainEvent{}, extrinsics: map[uint]model.ChainExtrinsic{},
@@ -113,12 +120,12 @@ func TestBlockTransactionCompletion(t *testing.T) {
 			q := &blockIntegrityQueue{dao: &d.blockIntegrityDao}
 			oldQueue := mq.Instant
 			mq.Instant = q
-			if fail == "notification" {
+			if fail == "enqueue" {
 				mq.Instant = &failingNotificationQueue{blockIntegrityQueue: *q}
 			}
 			t.Cleanup(func() { mq.Instant = oldQueue })
 			err := s.CreateChainBlock(context.Background(), "hash", block, events, spec, 0)
-			if fail == "notification" {
+			if fail == "enqueue" {
 				require.NoError(t, err)
 				require.Positive(t, mq.Instant.(*failingNotificationQueue).calls)
 				require.Equal(t, 1, d.publications, "queue failure must not suppress progress")
@@ -126,11 +133,12 @@ func TestBlockTransactionCompletion(t *testing.T) {
 				require.ErrorIs(t, err, transactionFault)
 				require.Zero(t, d.publications)
 			}
-			if fail != "publication" && fail != "notification" {
+			if fail != "publication" && fail != "enqueue" {
 				require.False(t, d.committed)
 				require.Empty(t, d.blocks)
 				require.Empty(t, d.events)
 				require.Empty(t, d.extrinsics)
+				require.Empty(t, d.projections)
 				require.Zero(t, q.calls)
 				d.fail = ""
 				require.NoError(t, s.CreateChainBlock(context.Background(), "hash", block, events, spec, 0))

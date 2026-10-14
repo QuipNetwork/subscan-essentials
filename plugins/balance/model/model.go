@@ -4,6 +4,15 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+type ProjectionCounts struct {
+	ID          uint  `gorm:"primaryKey;autoIncrement:false"`
+	Initialized bool  `gorm:"not null"`
+	Transfers   int64 `gorm:"not null"`
+	Accounts    int64 `gorm:"not null"`
+}
+
+func (ProjectionCounts) TableName() string { return "balance_projection_counts" }
+
 type Account struct {
 	ID       uint            `gorm:"primary_key" json:"-"`
 	Address  string          `gorm:"default: null;size:100;index:address,unique;index:balance_address,priority:2" json:"address"`

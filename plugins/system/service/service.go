@@ -22,7 +22,7 @@ func (s *Service) GetExtrinsicError(hash string) *model.ExtrinsicError {
 	return dao.ExtrinsicError(s.dao, hash)
 }
 
-func (s *Service) ExtrinsicFailed(spec int, event *storage.Event, paramEvent []storage.EventParam) {
+func (s *Service) ExtrinsicFailed(spec int, event *storage.Event, paramEvent []storage.EventParam) error {
 
 	type DispatchErrorModule struct {
 		Index int `json:"index"`
@@ -34,37 +34,42 @@ func (s *Service) ExtrinsicFailed(spec int, event *storage.Event, paramEvent []s
 		if param.Type == "DispatchError" {
 
 			var dr map[string]interface{}
-			_ = util.UnmarshalAny(&dr, param.Value)
+			if err := util.UnmarshalAny(&dr, param.Value); err != nil {
+				return err
+			}
 
 			if _, ok := dr["Error"]; ok {
-				_ = dao.CreateExtrinsicError(s.dao,
+				return dao.CreateExtrinsicError(s.dao,
 					genExtrinsicIndex(event),
 					dao.CheckExtrinsicError(spec, s.dao.SpecialMetadata(spec), util.IntFromInterface(dr["Module"]), util.IntFromInterface(dr["Error"])))
 
 			} else if _, ok := dr["Module"]; ok {
 				var module DispatchErrorModule
-				_ = util.UnmarshalAny(&module, dr["Module"])
+				if err := util.UnmarshalAny(&module, dr["Module"]); err != nil {
+					return err
+				}
 
-				_ = dao.CreateExtrinsicError(s.dao,
+				return dao.CreateExtrinsicError(s.dao,
 					genExtrinsicIndex(event),
 					dao.CheckExtrinsicError(spec, s.dao.SpecialMetadata(spec), module.Index, module.Error))
 
 			} else if _, ok := dr["BadOrigin"]; ok {
-				_ = dao.CreateExtrinsicError(s.dao, genExtrinsicIndex(event),
+				return dao.CreateExtrinsicError(s.dao, genExtrinsicIndex(event),
 					&model.MetadataModuleError{Name: "BadOrigin"})
 
 			} else if _, ok := dr["CannotLookup"]; ok {
-				_ = dao.CreateExtrinsicError(s.dao, genExtrinsicIndex(event),
+				return dao.CreateExtrinsicError(s.dao, genExtrinsicIndex(event),
 					&model.MetadataModuleError{Name: "CannotLookup"})
 
 			} else if _, ok := dr["Other"]; ok {
-				_ = dao.CreateExtrinsicError(s.dao, genExtrinsicIndex(event),
+				return dao.CreateExtrinsicError(s.dao, genExtrinsicIndex(event),
 					&model.MetadataModuleError{Name: "Other"})
 
 			}
 			break
 		}
 	}
+	return fmt.Errorf("unsupported dispatch error at %s", genExtrinsicIndex(event))
 }
 
 func genExtrinsicIndex(event *storage.Event) string {

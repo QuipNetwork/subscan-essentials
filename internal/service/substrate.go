@@ -111,10 +111,7 @@ func (s *Service) FillBlockData(ctx context.Context, blockNum uint, force bool) 
 	block := s.dao.GetBlockByNum(ctx, blockNum)
 	if block != nil && block.Finalized && !block.CodecError && !force {
 		// Recover publication after a crash, lost Redis reply, or ambiguous commit.
-		if err = s.dao.PublishBlockCompletion(ctx, blockNum); err != nil {
-			return fmt.Errorf("committed block %d publication: %w", blockNum, err)
-		}
-		return nil
+		return s.completeCoreBlock(ctx, blockNum)
 	}
 
 	conn := s.dbStorage.RPCPool().Conn

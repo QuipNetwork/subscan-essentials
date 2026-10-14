@@ -43,6 +43,11 @@ func Run(dt string) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			srv.RunProjectionRecovery(ctx)
+		}()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			Consumption()
 		}()
 	default:

@@ -66,9 +66,18 @@ func RefreshAccount(ctx context.Context, s *Storage, accountId string) error {
 	}
 	db := s.Dao.GetDbInstance().(*gorm.DB)
 	var account = bModel.Account{Address: accountId}
-	q := db.WithContext(ctx).Scopes(model.IgnoreDuplicate).Where("address = ?", accountId).FirstOrCreate(&account)
-	if q.RowsAffected == 1 {
-		_, _ = s.Pool.HINCRBY(ctx, model.MetadataCacheKey(), "total_account", 1)
+	if err := withCounts(ctx, s, func(tx *gorm.DB, counts *bModel.ProjectionCounts) error {
+		q := tx.Scopes(model.IgnoreDuplicate).Where("address = ?", accountId).FirstOrCreate(&account)
+		if q.Error != nil {
+			return q.Error
+		}
+		counts.Accounts += q.RowsAffected
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := SyncCounts(ctx, s); err != nil {
+		return err
 	}
 	return AfterAccountCreate(ctx, db, &account)
 }

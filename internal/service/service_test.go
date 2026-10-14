@@ -101,6 +101,15 @@ func (m *MockDao) DbBegin() (*dao.GormDB, error) {
 func (m *MockDao) DbCommit(*dao.GormDB) error {
 	return nil
 }
+func (m *MockDao) CreatePluginProjections(*dao.GormDB, []model.PluginProjection) error { return nil }
+func (m *MockDao) PendingPluginProjections(context.Context, *uint, int) ([]model.PluginProjection, error) {
+	return nil, nil
+}
+func (m *MockDao) ReservePluginProjection(context.Context, string) (bool, error)  { return true, nil }
+func (m *MockDao) RecordProjectionDelivery(context.Context, string, string) error { return nil }
+func (m *MockDao) ProcessPluginProjection(context.Context, string, func(model.PluginProjection) error) error {
+	return nil
+}
 func (m *MockDao) PublishBlockCompletion(context.Context, uint) error {
 	return nil
 }

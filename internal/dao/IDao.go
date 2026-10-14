@@ -16,6 +16,11 @@ type IDao interface {
 
 	CreateBlock(context.Context, *GormDB, *model.ChainBlock) (err error)
 	PublishBlockCompletion(context.Context, uint) error
+	CreatePluginProjections(*GormDB, []model.PluginProjection) error
+	PendingPluginProjections(context.Context, *uint, int) ([]model.PluginProjection, error)
+	ReservePluginProjection(context.Context, string) (bool, error)
+	RecordProjectionDelivery(context.Context, string, string) error
+	ProcessPluginProjection(context.Context, string, func(model.PluginProjection) error) error
 	UpdateEventAndExtrinsic(*GormDB, *model.ChainBlock, int, int, int, string, bool, bool) error
 	GetNearBlock(uint) *model.ChainBlock
 	SplitBlockTable(blockNum uint)

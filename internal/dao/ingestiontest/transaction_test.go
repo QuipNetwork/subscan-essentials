@@ -19,6 +19,7 @@ import (
 	"github.com/itering/subscan/configs"
 	"github.com/itering/subscan/internal/dao"
 	"github.com/itering/subscan/model"
+	redisDao "github.com/itering/subscan/share/redis"
 	"github.com/itering/subscan/util"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
@@ -38,7 +39,8 @@ func (c lostExecReply) Do(command string, args ...interface{}) (interface{}, err
 	return v, err
 }
 
-func TestTransactionPublication(t *testing.T) {
+func storageFixture(t *testing.T) (*dao.Dao, *dao.DbStorage, *redisDao.Dao, redis.Conn) {
+	t.Helper()
 	dsn, redisAddr := os.Getenv("INGESTION_TEST_POSTGRES"), os.Getenv("INGESTION_TEST_REDIS")
 	if dsn == "" || redisAddr == "" {
 		t.Skip("run scripts/test-ingestion-transactions.sh for disposable PostgreSQL/Redis tests")
@@ -68,6 +70,15 @@ func TestTransactionPublication(t *testing.T) {
 	ledger := model.RedisKeyPrefix() + "block_publications"
 	keys := []interface{}{dao.RedisMetadataKey, dao.RedisFillAlreadyBlockNum, dao.RedisFillFinalizedBlockNum, ledger}
 	t.Cleanup(func() { _, _ = conn.Do("DEL", keys...) })
+	return d, storage, pool, conn
+}
+
+func TestTransactionPublication(t *testing.T) {
+	d, storage, pool, conn := storageFixture(t)
+	db := storage.GetDbInstance().(*gorm.DB)
+	redisAddr := os.Getenv("INGESTION_TEST_REDIS")
+	ledger := model.RedisKeyPrefix() + "block_publications"
+	keys := []interface{}{dao.RedisMetadataKey, dao.RedisFillAlreadyBlockNum, dao.RedisFillFinalizedBlockNum, ledger}
 	ctx := context.Background()
 	rows := []model.ChainExtrinsic{
 		{ID: 4200000, BlockNum: 42, ExtrinsicIndex: "42-0"},
@@ -82,12 +93,13 @@ func TestTransactionPublication(t *testing.T) {
 		require.NoError(t, d.CreateExtrinsic(ctx, tx, rows, 999), "signed counts must come from inserted rows")
 		require.NoError(t, d.CreateEvent(tx, []model.ChainEvent{{ID: 4200000, BlockNum: 42, EventId: "Ready", ModuleId: "example"}}))
 		require.NoError(t, d.CreateLog(tx, []model.ChainLog{{ID: 4200000, BlockNum: 42, LogIndex: "42-0", LogType: "Other"}}))
+		require.NoError(t, d.CreatePluginProjections(tx, []model.PluginProjection{{ID: "transaction-proof", BlockNum: 42, PluginName: "balance", Kind: "block", EntityIndex: "42"}}))
 		require.NoError(t, d.CreateBlock(ctx, tx, &model.ChainBlock{ID: 42, BlockNum: 42, Hash: "hash42", Finalized: true, ExtrinsicsCount: len(rows)}))
 		return tx
 	}
 	assertNoRows := func(t *testing.T) {
 		t.Helper()
-		for _, row := range []interface{}{&model.ChainBlock{}, &model.ChainEvent{}, &model.ChainExtrinsic{}, &model.ChainLog{}, &model.BlockPublication{}, &model.AccountExtrinsicMapping{}} {
+		for _, row := range []interface{}{&model.ChainBlock{}, &model.ChainEvent{}, &model.ChainExtrinsic{}, &model.ChainLog{}, &model.BlockPublication{}, &model.AccountExtrinsicMapping{}, &model.PluginProjection{}} {
 			var count int64
 			require.NoError(t, db.Model(row).Count(&count).Error)
 			require.Zero(t, count)

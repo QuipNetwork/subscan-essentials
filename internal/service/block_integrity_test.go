@@ -20,13 +20,25 @@ import (
 
 type blockIntegrityDao struct {
 	MockDao
-	actions    []string
-	extrinsics map[uint]model.ChainExtrinsic
-	events     map[uint]model.ChainEvent
-	blocks     map[uint]model.ChainBlock
-	committed  bool
+	actions     []string
+	extrinsics  map[uint]model.ChainExtrinsic
+	events      map[uint]model.ChainEvent
+	blocks      map[uint]model.ChainBlock
+	committed   bool
+	projections []model.PluginProjection
 }
 
+func (d *blockIntegrityDao) CreatePluginProjections(_ *dao.GormDB, rows []model.PluginProjection) error {
+	d.actions = append(d.actions, "projections")
+	d.projections = rows
+	return nil
+}
+func (d *blockIntegrityDao) PendingPluginProjections(context.Context, *uint, int) ([]model.PluginProjection, error) {
+	if !d.committed {
+		return nil, nil
+	}
+	return d.projections, nil
+}
 func (d *blockIntegrityDao) SplitBlockTable(uint) { d.actions = append(d.actions, "split/cache") }
 func (d *blockIntegrityDao) DbBegin() (*dao.GormDB, error) {
 	d.actions = append(d.actions, "begin")
@@ -72,6 +84,9 @@ type blockIntegrityQueue struct {
 	dao   *blockIntegrityDao
 }
 
+func (q *blockIntegrityQueue) ForcePublish(a, b string, c interface{}) error {
+	return q.Publish(a, b, c)
+}
 func (q *blockIntegrityQueue) Publish(string, string, interface{}) error {
 	if !q.dao.committed {
 		return fmt.Errorf("notification before commit")

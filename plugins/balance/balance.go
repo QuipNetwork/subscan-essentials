@@ -106,6 +106,7 @@ func (a *Balance) Version() string {
 func (a *Balance) Migrate() {
 	_ = a.d.AutoMigration(&model.Account{})
 	_ = a.d.AutoMigration(&model.Transfer{})
+	_ = a.d.AutoMigration(&model.ProjectionCounts{})
 }
 
 func (a *Balance) ExecWorker(context.Context, string, string, interface{}) error { return nil }

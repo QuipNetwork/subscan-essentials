@@ -6,6 +6,7 @@ import (
 	"github.com/bitly/go-simplejson"
 	"github.com/itering/go-workers"
 	"github.com/itering/subscan-plugin/storage"
+	"github.com/itering/subscan/internal/service"
 	"github.com/itering/subscan/model"
 	"github.com/itering/subscan/plugins"
 	"github.com/itering/subscan/share/metrics"
@@ -19,6 +20,7 @@ func Consumption() {
 	concurrency := util.StringToInt(util.GetEnv("WORKER_GOROUTINE_COUNT", "10"))
 	workers.Process("block", emitMsg, concurrency)
 	workers.Process("balance", emitMsg, concurrency)
+	workers.Process("plugin-projection", emitMsg, concurrency)
 	workers.Process("plugin-block", emitMsg, concurrency)
 	workers.Process("plugin-event", emitMsg, concurrency)
 	workers.Process("plugin-extrinsic", emitMsg, concurrency)
@@ -45,6 +47,12 @@ func emitMsg(message *workers.Msg) {
 		switch queue {
 		case "block":
 			return blockWorker(ctx, raw)
+		case "plugin-projection":
+			id := raw.Get("projection_id").MustString()
+			if id == "" {
+				return fmt.Errorf("missing projection id")
+			}
+			return service.ProcessPluginProjection(ctx, srv.GetDao(), id)
 		case "plugin-block":
 			type T struct {
 				BlockNum   uint   `json:"block_num"`
@@ -83,7 +91,7 @@ func emitMsg(message *workers.Msg) {
 
 		case "plugin-extrinsic":
 			type T struct {
-				ExtrinsicIndex string `json:"event_index"`
+				ExtrinsicIndex string `json:"extrinsic_index"`
 				PluginName     string `json:"plugin_name"`
 			}
 			var args T
@@ -118,7 +126,15 @@ func emitMsg(message *workers.Msg) {
 	}
 	err := do(context.Background(), message.Get("queue").MustString(), message.Get("class").MustString(), message.Get("args"))
 	if err != nil {
-		_ = mq.Instant.ForcePublish(message.Get("queue").MustString(), message.Get("class").MustString(), message.Get("args"))
+		queue := message.Get("queue").MustString()
+		util.Logger().Error(fmt.Errorf("worker %s: %w", queue, err))
+		// Durable projection retries are scheduled in SQL. Immediate requeue
+		// would bypass their backoff and spin on unavailable enrichment/RPC.
+		if queue != "plugin-projection" {
+			if retryErr := mq.Instant.ForcePublish(queue, message.Get("class").MustString(), message.Get("args")); retryErr != nil {
+				util.Logger().Error(fmt.Errorf("worker %s requeue: %w", queue, retryErr))
+			}
+		}
 	}
 }
 

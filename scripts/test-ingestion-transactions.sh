@@ -10,7 +10,7 @@ cleanup() {
 }
 trap cleanup EXIT
 docker run --rm -d --name "$pg_name" -e POSTGRES_PASSWORD=ingestion-test \
-  -e POSTGRES_DB=ingestion_test -p 127.0.0.1::5432 postgres:16-alpine >/dev/null
+  -e POSTGRES_DB=ingestion_test -p 127.0.0.1::5432 postgres:17-alpine >/dev/null
 docker run --rm -d --name "$redis_name" -p 127.0.0.1::6379 redis:7-alpine >/dev/null
 pg_addr=$(docker port "$pg_name" 5432/tcp)
 redis_addr=$(docker port "$redis_name" 6379/tcp)
