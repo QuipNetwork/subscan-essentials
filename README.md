@@ -49,9 +49,39 @@ the Subscan team and powering [subscan.io](https://www.subscan.io/), it provides
 
 - Linux/macOS
 - Git
-- **Go 1.23+**
+- **Go 1.25+**
 - **Redis 3.0.4+**
 - **MySQL 8.0+** or **PostgreSQL 16+**
+
+### Quip decoder dependencies
+
+This fork keeps the `github.com/itering/subscan` module identity and existing
+`github.com/itering` import paths. Its main `go.mod` replaces both decoder modules
+with reviewed, immutable Quip fork versions, with checksums in `go.sum`:
+
+| Module | Quip fork commit | Go pseudo-version |
+| --- | --- | --- |
+| `github.com/itering/scale.go` | `520629284934adca438e53c05fc1bce75a876e79` | `v0.0.0-20261014234944-520629284934` |
+| `github.com/itering/substrate-api-rpc` | `10a2c6704ba78d26aeb3960c64e855764df67830` | `v0.0.0-20261015004702-10a2c6704ba7` |
+
+Both replacements are necessary: Go does not inherit the RPC dependency's
+decoder replacement. Local checkout replacements and temporary modfiles are no
+longer needed. The existing Gorm fork replacement remains unchanged. The pinned
+decoder selects `x/crypto v0.45.0`, `x/sys v0.38.0`, `x/net v0.47.0`,
+`x/text v0.31.0`, `x/tools v0.38.0`, and `x/sync v0.18.0` through Go's dependency
+graph. The resulting module requirements exactly match the earlier reviewed
+temporary modfile; only the two replacement destinations differ.
+
+The committed Primary BABE enrichment fixture now runs without an opt-in flag:
+
+```sh
+go test -mod=readonly ./internal/service -run '^TestCapturedPrimaryBabeEnrichment$' -count=1
+```
+
+See [ingestion validation](docs/ingestion-transactions.md) for the external archive
+replay and disposable PostgreSQL/Redis suite. Broad legacy test suites may contact
+configured services. Backend Docker shim removal, actual amd64 image acceptance,
+and fresh-node ingestion remain separate integration requirements.
 
 ### Installation
 

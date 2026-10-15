@@ -141,11 +141,6 @@ func (r auxiliaryReplay) serve(t *testing.T, storageAlias bool) func() []executi
 }
 
 func TestCapturedPrimaryBabeEnrichment(t *testing.T) {
-	// The fixture is self-contained, but the V16 decoder forks are not pinned
-	// in the module yet. Opt in explicitly until the dependency integration gate.
-	if os.Getenv("QUIP_PRIMARY_AUXILIARY_REPLAY") != "1" {
-		t.Skip("set QUIP_PRIMARY_AUXILIARY_REPLAY=1 with reviewed decoder forks")
-	}
 	isolateRuntimeSpecs(t, 118)
 	dir := filepath.Join("..", "..", "testdata", "quip-babe", "primary-aux")
 	replay := auxiliaryReplay{}

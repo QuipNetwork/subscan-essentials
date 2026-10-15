@@ -306,15 +306,14 @@ the WebSocket supplement manifest SHA is
 `testdata/quip-babe/primary-aux` together with the captured PrimaryVRF header.
 Its real V16 metadata and session state attribute authority index 2 to the
 captured validator account; no synthetic validator labels or method aliases
-are used. This test is self-contained after selecting the reviewed forks.
+are used. This test is self-contained with the committed fork module pins and
+runs without an opt-in environment variable.
 
-Run both with a temporary modfile replacing scale.go and substrate-api-rpc by
-their reviewed checkouts (repository dependency pins are a later gate):
+Run both with the committed module pins:
 
 ```sh
-QUIP_PRIMARY_AUXILIARY_REPLAY=1 \
 QUIP_AUXILIARY_CAPTURES=/path/to/quip-subscan-rr-archive-capture-20261014 \
-go test -modfile=/path/to/reviewed.mod ./internal/service \
+go test -mod=readonly ./internal/service \
   -run '^TestCaptured(PrimaryBabeEnrichment|AuxiliaryBlockReplay)$' -count=1
 ```
 

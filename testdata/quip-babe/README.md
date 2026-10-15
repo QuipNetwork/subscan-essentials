@@ -111,9 +111,9 @@ JSON serialization retains available session zero and author status.
 
 This is node-reported historical state, not a cryptographic storage proof. It
 does not demonstrate session rotation, SQL persistence, or application-image
-acceptance. The test uses only committed files and a local recorder; it requires
-the reviewed decoder forks and `QUIP_PRIMARY_AUXILIARY_REPLAY=1` while the module
-dependency pins are still pending.
+acceptance. The test uses only committed files and a local recorder. With the
+reviewed decoder forks pinned in `go.mod`, it runs without an opt-in flag or a
+temporary modfile.
 
 To make a new capture without overwriting the reviewed evidence:
 
