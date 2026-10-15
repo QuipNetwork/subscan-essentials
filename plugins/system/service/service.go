@@ -1,7 +1,11 @@
 package service
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"strings"
+
 	"github.com/itering/subscan-plugin/storage"
 	"github.com/itering/subscan/plugins/system/dao"
 	"github.com/itering/subscan/plugins/system/model"
@@ -23,53 +27,89 @@ func (s *Service) GetExtrinsicError(hash string) *model.ExtrinsicError {
 }
 
 func (s *Service) ExtrinsicFailed(spec int, event *storage.Event, paramEvent []storage.EventParam) error {
-
-	type DispatchErrorModule struct {
-		Index int `json:"index"`
-		Error int `json:"error"`
-	}
-
 	for _, param := range paramEvent {
-
-		if param.Type == "DispatchError" {
-
-			var dr map[string]interface{}
-			if err := util.UnmarshalAny(&dr, param.Value); err != nil {
-				return err
-			}
-
-			if _, ok := dr["Error"]; ok {
-				return dao.CreateExtrinsicError(s.dao,
-					genExtrinsicIndex(event),
-					dao.CheckExtrinsicError(spec, s.dao.SpecialMetadata(spec), util.IntFromInterface(dr["Module"]), util.IntFromInterface(dr["Error"])))
-
-			} else if _, ok := dr["Module"]; ok {
-				var module DispatchErrorModule
-				if err := util.UnmarshalAny(&module, dr["Module"]); err != nil {
-					return err
-				}
-
-				return dao.CreateExtrinsicError(s.dao,
-					genExtrinsicIndex(event),
-					dao.CheckExtrinsicError(spec, s.dao.SpecialMetadata(spec), module.Index, module.Error))
-
-			} else if _, ok := dr["BadOrigin"]; ok {
-				return dao.CreateExtrinsicError(s.dao, genExtrinsicIndex(event),
-					&model.MetadataModuleError{Name: "BadOrigin"})
-
-			} else if _, ok := dr["CannotLookup"]; ok {
-				return dao.CreateExtrinsicError(s.dao, genExtrinsicIndex(event),
-					&model.MetadataModuleError{Name: "CannotLookup"})
-
-			} else if _, ok := dr["Other"]; ok {
-				return dao.CreateExtrinsicError(s.dao, genExtrinsicIndex(event),
-					&model.MetadataModuleError{Name: "Other"})
-
-			}
-			break
+		// Portable metadata retains the Rust namespace in the decoded type.
+		if param.Type != "DispatchError" && param.Type != "sp_runtime:DispatchError" {
+			continue
 		}
+		moduleIndex, errorIndex, name, err := dispatchError(param.Value)
+		if err != nil {
+			return fmt.Errorf("dispatch error at %s: %w", genExtrinsicIndex(event), err)
+		}
+		detail := &model.MetadataModuleError{Name: name}
+		if name == "" {
+			detail = dao.CheckExtrinsicError(spec, s.dao.SpecialMetadata(spec), moduleIndex, errorIndex)
+		}
+		return dao.CreateExtrinsicError(s.dao, genExtrinsicIndex(event), detail)
 	}
 	return fmt.Errorf("unsupported dispatch error at %s", genExtrinsicIndex(event))
+}
+
+// dispatchError accepts legacy numeric module errors and portable ModuleError's
+// four SCALE bytes. The first byte is the pallet error variant; the remaining
+// bytes may contain variant fields and must not be interpreted as an integer.
+func dispatchError(value interface{}) (moduleIndex, errorIndex int, name string, err error) {
+	bad := func() (int, int, string, error) {
+		return 0, 0, "", fmt.Errorf("unsupported or malformed dispatch error")
+	}
+	if text, ok := value.(string); ok {
+		switch text {
+		case "BadOrigin", "CannotLookup", "Other":
+			return 0, 0, text, nil
+		default:
+			return bad()
+		}
+	}
+	var fields map[string]json.RawMessage
+	if err := util.UnmarshalAny(&fields, value); err != nil {
+		return bad()
+	}
+	byteIndex := func(raw json.RawMessage) (int, bool) {
+		var n *uint8
+		if json.Unmarshal(raw, &n) != nil || n == nil {
+			return 0, false
+		}
+		return int(*n), true
+	}
+	if raw, ok := fields["Error"]; ok && len(fields) == 2 {
+		m, mok := byteIndex(fields["Module"])
+		e, eok := byteIndex(raw)
+		if mok && eok {
+			return m, e, "", nil
+		}
+		return bad()
+	}
+	if len(fields) != 1 {
+		return bad()
+	}
+	if raw, ok := fields["Module"]; ok {
+		var module map[string]json.RawMessage
+		if json.Unmarshal(raw, &module) != nil || len(module) != 2 {
+			return bad()
+		}
+		m, ok := byteIndex(module["index"])
+		if !ok {
+			return bad()
+		}
+		if e, ok := byteIndex(module["error"]); ok {
+			return m, e, "", nil
+		}
+		var encoded string
+		if json.Unmarshal(module["error"], &encoded) != nil || !strings.HasPrefix(encoded, "0x") {
+			return bad()
+		}
+		data, err := hex.DecodeString(encoded[2:])
+		if err != nil || len(data) != 4 {
+			return bad()
+		}
+		return m, int(data[0]), "", nil
+	}
+	for _, name := range []string{"BadOrigin", "CannotLookup", "Other"} {
+		if raw, ok := fields[name]; ok && string(raw) == "null" {
+			return 0, 0, name, nil
+		}
+	}
+	return bad()
 }
 
 func genExtrinsicIndex(event *storage.Event) string {
