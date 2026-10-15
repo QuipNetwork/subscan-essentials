@@ -25,6 +25,7 @@ const (
 )
 
 type ChainBlock struct {
+	BlockStateInfo
 	ID              uint   `gorm:"primary_key" json:"id"`
 	BlockNum        uint   `json:"block_num" gorm:"index:block_num,unique"`
 	BlockTimestamp  int    `json:"block_timestamp"`
@@ -207,16 +208,21 @@ type ChainExtrinsic struct {
 	CallModuleFunction string `json:"call_module_function"  gorm:"size:255;index:query_function"`
 	CallModule         string `json:"call_module"  gorm:"size:255;index:query_function"`
 
-	Params        ExtrinsicParams `json:"params" gorm:"type:json;"`
-	AccountId     string          `json:"account_id" gorm:"size:255;index:account_id"`
-	Signature     string          `json:"signature"`
-	Nonce         int             `json:"nonce"`
-	Era           string          `json:"era"`
-	ExtrinsicHash string          `json:"extrinsic_hash" gorm:"default: null;index:extrinsic_hash"`
-	IsSigned      bool            `json:"is_signed" gorm:"index"`
-	Success       bool            `json:"success"`
-	Fee           decimal.Decimal `json:"fee" gorm:"type:decimal(65,0);"`
-	UsedFee       decimal.Decimal `json:"used_fee" gorm:"type:decimal(65,0);"`
+	Params           ExtrinsicParams `json:"params" gorm:"type:json;"`
+	AccountId        string          `json:"account_id" gorm:"size:255;index:account_id"`
+	Signature        string          `json:"signature"`
+	Nonce            int             `json:"nonce"`
+	Era              string          `json:"era"`
+	ExtrinsicHash    string          `json:"extrinsic_hash" gorm:"default: null;index:extrinsic_hash"`
+	IsSigned         bool            `json:"is_signed" gorm:"index"`
+	Success          bool            `json:"success"`
+	Fee              decimal.Decimal `json:"fee" gorm:"type:decimal(65,0);"`
+	UsedFee          decimal.Decimal `json:"used_fee" gorm:"type:decimal(65,0);"`
+	FeeStatus        string          `json:"fee_status" gorm:"size:24;default:unknown"`
+	UsedFeeStatus    string          `json:"used_fee_status" gorm:"size:24;default:unknown"`
+	FeeStateHash     string          `json:"fee_state_hash" gorm:"size:100"`
+	UsedFeeStateHash string          `json:"used_fee_state_hash" gorm:"size:100"`
+	FeeError         string          `json:"fee_error,omitempty" gorm:"type:text"`
 
 	ParamsRawBytes []byte `json:"-" gorm:"types:bytes" `
 	ParamsRaw      string `json:"params_raw" gorm:"-" ` // only for decode

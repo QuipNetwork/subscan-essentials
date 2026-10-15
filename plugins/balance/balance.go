@@ -26,8 +26,7 @@ func (a *Balance) Commands() []cli.Command {
 		{
 			Name: "InitAccount",
 			Action: func(c *cli.Context) error {
-				dao.InitAccount(a.storage())
-				return nil
+				return dao.InitAccount(a.storage())
 			},
 		},
 		{
@@ -40,8 +39,7 @@ func (a *Balance) Commands() []cli.Command {
 		{
 			Name: "InitTransfer",
 			Action: func(c *cli.Context) error {
-				dao.InitTransfer(a.storage())
-				return nil
+				return dao.InitTransfer(a.storage())
 			},
 		},
 	}
@@ -105,7 +103,9 @@ func (a *Balance) Version() string {
 
 func (a *Balance) Migrate() {
 	_ = a.d.AutoMigration(&model.Account{})
+	_ = a.d.AutoMigration(&model.AccountObservation{})
 	_ = a.d.AutoMigration(&model.Transfer{})
+	_ = a.d.AutoMigration(&model.ProjectionCounts{})
 }
 
 func (a *Balance) ExecWorker(context.Context, string, string, interface{}) error { return nil }

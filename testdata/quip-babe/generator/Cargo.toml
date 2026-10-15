@@ -1,0 +1,11 @@
+[package]
+name = "quip-babe-author-fixtures"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+codec = { package = "parity-scale-codec", version = "=3.7.5" }
+sp-core = { git = "https://github.com/QuipNetwork/polkadot-sdk.git", rev = "845eb9986c7131056b077d14ad7249f9d65ca111" }
+sp-consensus-babe = { git = "https://github.com/QuipNetwork/polkadot-sdk.git", rev = "845eb9986c7131056b077d14ad7249f9d65ca111" }
+quip-crypto-primitives = { git = "https://github.com/QuipNetwork/polkadot-sdk.git", rev = "845eb9986c7131056b077d14ad7249f9d65ca111" }

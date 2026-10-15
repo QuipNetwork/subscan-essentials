@@ -57,6 +57,7 @@ func (s *Service) GetBlocksSampleCursor(ctx context.Context, limit int, before, 
 
 func (s *Service) BlockAsSampleJson(block *model.ChainBlock) *model.SampleBlockJson {
 	b := model.SampleBlockJson{
+		BlockStateInfo:  block.StateInfo(),
 		BlockNum:        block.BlockNum,
 		BlockTimestamp:  block.BlockTimestamp,
 		Hash:            block.Hash,

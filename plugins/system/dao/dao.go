@@ -1,6 +1,7 @@
 package dao
 
 import (
+	"fmt"
 	"github.com/itering/subscan-plugin/storage"
 	"github.com/itering/subscan/plugins/system/model"
 	"github.com/itering/substrate-api-rpc/metadata"
@@ -9,7 +10,7 @@ import (
 
 func CreateExtrinsicError(db storage.DB, extrinsicIndex string, moduleError *model.MetadataModuleError) error {
 	if moduleError == nil {
-		return nil
+		return fmt.Errorf("dispatch error metadata unavailable for %s", extrinsicIndex)
 	}
 	err := db.Create(&model.ExtrinsicError{
 		ExtrinsicIndex: extrinsicIndex,

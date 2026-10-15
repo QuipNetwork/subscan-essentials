@@ -1,159 +1,241 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/itering/scale.go/types"
+	"fmt"
+	"math/rand"
+
+	core "github.com/itering/subscan/model"
 	"github.com/itering/subscan/util"
-	"github.com/itering/substrate-api-rpc/model"
+	rpcmodel "github.com/itering/substrate-api-rpc/model"
 	"github.com/itering/substrate-api-rpc/rpc"
-	"github.com/itering/substrate-api-rpc/storage"
 	"github.com/itering/substrate-api-rpc/websocket"
 	"github.com/shopspring/decimal"
-	"math/rand"
-	"strings"
 )
 
 type PaymentQueryFeeDetails struct {
 	InclusionFee *inclusionFee `json:"inclusionFee"`
 }
-type inclusionFee struct {
-	BaseFee           decimal.Decimal `json:"baseFee"`
-	LenFee            decimal.Decimal `json:"lenFee"`
-	AdjustedWeightFee decimal.Decimal `json:"adjustedWeightFee"`
-}
-
-func (i *inclusionFee) UnmarshalJSON(data []byte) error {
-	var m map[string]interface{}
-	if err := json.Unmarshal(data, &m); err != nil {
-		return err
-	}
-	for k, v := range m {
-		if hex, ok := v.(string); ok && strings.HasPrefix(hex, "0x") {
-			m[k] = util.HexToNumStr(hex)
-		}
-	}
-	type T inclusionFee
-	return util.UnmarshalAny((*T)(i), m)
-}
-
-func (p *PaymentQueryFeeDetails) basicFee() decimal.Decimal {
-	return p.InclusionFee.BaseFee.Add(p.InclusionFee.LenFee)
-}
+type inclusionFee struct{ BaseFee, LenFee, AdjustedWeightFee decimal.Decimal }
 
 func (p *PaymentQueryFeeDetails) EstimateFee() decimal.Decimal {
-	return p.basicFee().Add(p.InclusionFee.AdjustedWeightFee)
-}
-
-func (p *PaymentQueryFeeDetails) ActualFee(estimateWeight, actualWeight decimal.Decimal) decimal.Decimal {
-	if estimateWeight.IsZero() || actualWeight.IsZero() {
-		// https://alephzero.subscan.io/extrinsic/4933476-1
+	if p.InclusionFee == nil {
 		return decimal.Zero
 	}
-	return p.basicFee().Add(p.InclusionFee.AdjustedWeightFee.Div(estimateWeight).Mul(actualWeight)).Floor()
+	return p.InclusionFee.BaseFee.Add(p.InclusionFee.LenFee).Add(p.InclusionFee.AdjustedWeightFee)
+}
+func amountJSON(raw json.RawMessage) (decimal.Decimal, error) {
+	var value interface{}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return decimal.Zero, err
+	}
+	return core.UnsignedAmount(value)
+}
+func (p *PaymentQueryFeeDetails) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	raw, ok := fields["inclusionFee"]
+	if !ok {
+		return fmt.Errorf("missing inclusionFee")
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		p.InclusionFee = nil
+		return nil
+	}
+	var parts map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return err
+	}
+	fee := &inclusionFee{}
+	for name, out := range map[string]*decimal.Decimal{"baseFee": &fee.BaseFee, "lenFee": &fee.LenFee, "adjustedWeightFee": &fee.AdjustedWeightFee} {
+		value, err := amountJSON(parts[name])
+		if err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		*out = value
+	}
+	p.InclusionFee = fee
+	return nil
 }
 
 type PaymentQueryInfo struct {
 	Class      string
 	PartialFee decimal.Decimal
 	Weight     decimal.Decimal
+	ProofSize  uint64
 }
 
-func StateCallFunction(id int, method, encodedExtrinsic, hash string) []byte {
-	p := rpc.Param{Id: id, Method: method, Params: []string{encodedExtrinsic, hash}}
-	p.JsonRpc = "2.0"
-	b, _ := json.Marshal(p)
-	return b
+func (p *PaymentQueryInfo) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	fee, err := amountJSON(fields["partialFee"])
+	if err != nil {
+		return fmt.Errorf("partialFee: %w", err)
+	}
+	p.PartialFee = fee
+	if err := json.Unmarshal(fields["class"], &p.Class); err != nil {
+		return err
+	}
+	weight := bytes.TrimSpace(fields["weight"])
+	if len(weight) > 0 && weight[0] == '{' {
+		var parts map[string]json.RawMessage
+		if err := json.Unmarshal(weight, &parts); err != nil {
+			return err
+		}
+		ref := parts["ref_time"]
+		if ref == nil {
+			ref = parts["refTime"]
+		}
+		proof := parts["proof_size"]
+		if proof == nil {
+			proof = parts["proofSize"]
+		}
+		p.Weight, err = amountJSON(ref)
+		if err != nil {
+			return err
+		}
+		proofValue, err := amountJSON(proof)
+		if err != nil {
+			return err
+		}
+		if !proofValue.BigInt().IsUint64() || !p.Weight.BigInt().IsUint64() {
+			return fmt.Errorf("WeightV2 exceeds uint64")
+		}
+		p.ProofSize = proofValue.BigInt().Uint64()
+	} else {
+		p.Weight, err = amountJSON(weight)
+		if err != nil {
+			return err
+		}
+		if !p.Weight.BigInt().IsUint64() {
+			return fmt.Errorf("weight exceeds uint64")
+		}
+	}
+	return nil
 }
 
 func SystemPaymentQueryInfo(id int, encodedExtrinsic, hash string) []byte {
-	p := rpc.Param{Id: id, Method: "payment_queryInfo", Params: []string{encodedExtrinsic, hash}}
-	p.JsonRpc = "2.0"
+	p := rpc.Param{Id: id, JsonRpc: "2.0", Method: "payment_queryInfo", Params: []string{util.AddHex(encodedExtrinsic), hash}}
 	b, _ := json.Marshal(p)
 	return b
 }
-
 func SystemPaymentQueryFeeDetails(id int, encodedExtrinsic, hash string) []byte {
-	p := rpc.Param{Id: id, Method: "payment_queryFeeDetails", Params: []string{encodedExtrinsic, hash}}
-	p.JsonRpc = "2.0"
+	p := rpc.Param{Id: id, JsonRpc: "2.0", Method: "payment_queryFeeDetails", Params: []string{util.AddHex(encodedExtrinsic), hash}}
 	b, _ := json.Marshal(p)
 	return b
 }
 
-var InvalidValue = errors.New("invalid value")
-
-func GetPaymentQueryInfo(_ context.Context, spec int, encodedExtrinsic, hash string, isV2Weight bool) (paymentInfo *PaymentQueryInfo, err error) {
-	var result string
-	v := &model.JsonRpcResult{}
-	err = websocket.SendWsRequest(nil, v, StateCallFunction(rand.Intn(10000), "TransactionPaymentApi_query_info", encodedExtrinsic+types.Encode("U32", len(util.HexToBytes(encodedExtrinsic))), hash))
-	if err == nil {
-		result, err = v.ToString()
-		if err != nil {
-			return nil, err
-		}
-		if len(result) == 0 {
-			return nil, InvalidValue
-		}
-		storageBytes := util.HexToBytes(result)
-		var decodeMsg storage.StateStorage
-		if isV2Weight {
-			decodeMsg, _, err = storage.Decode(util.BytesToHex(storageBytes), "RuntimeDispatchInfo", &types.ScaleDecoderOption{Spec: spec})
-		}
-		if err != nil || !isV2Weight {
-			if decodeMsg, _, err = storage.Decode(util.BytesToHex(storageBytes), "RuntimeDispatchInfoV1", &types.ScaleDecoderOption{Spec: spec}); err != nil {
-				return nil, err
-			}
-		}
-		decodeMsg.ToAny(&paymentInfo)
-		return paymentInfo, nil
+// Keep result bytes intact until decoding typed amounts/weights. JsonRpcResult's
+// interface{} decoding would round large JSON integers through float64.
+func paymentRPC(ctx context.Context, hash string, request []byte, out interface{}) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	v = &model.JsonRpcResult{}
-	if err = websocket.SendWsRequest(nil, v, SystemPaymentQueryInfo(rand.Intn(10000), util.AddHex(encodedExtrinsic), hash)); err != nil {
-		return
+	if hash == "" {
+		return fmt.Errorf("fee query requires an explicit state hash")
 	}
-	if v.CheckErr() != nil {
-		return nil, InvalidValue
+	var response struct {
+		Result json.RawMessage `json:"result"`
+		Error  *rpcmodel.Error `json:"error"`
 	}
-	r := &PaymentQueryInfo{}
-	return r, util.UnmarshalAny(&r, v.Result)
+	if err := websocket.SendWsRequest(nil, &response, request); err != nil {
+		return err
+	}
+	if response.Error != nil {
+		return fmt.Errorf("fee RPC %d: %s", response.Error.Code, response.Error.Message)
+	}
+	if len(response.Result) == 0 || bytes.Equal(bytes.TrimSpace(response.Result), []byte("null")) {
+		return fmt.Errorf("missing fee RPC result")
+	}
+	return json.Unmarshal(response.Result, out)
+}
+func GetPaymentQueryInfo(ctx context.Context, _ int, encodedExtrinsic, hash string, _ bool) (*PaymentQueryInfo, error) {
+	result := &PaymentQueryInfo{}
+	if err := paymentRPC(ctx, hash, SystemPaymentQueryInfo(rand.Intn(10000), encodedExtrinsic, hash), result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+func GetPaymentQueryFeeDetails(ctx context.Context, encodedExtrinsic, hash string) (*PaymentQueryFeeDetails, error) {
+	result := &PaymentQueryFeeDetails{}
+	if err := paymentRPC(ctx, hash, SystemPaymentQueryFeeDetails(rand.Intn(10000), encodedExtrinsic, hash), result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+func estimateExtrinsicFee(ctx context.Context, encodedExtrinsic, hash string) (decimal.Decimal, error) {
+	details, detailsErr := GetPaymentQueryFeeDetails(ctx, encodedExtrinsic, hash)
+	if detailsErr == nil {
+		fee := details.EstimateFee()
+		if len(fee.String()) <= 65 {
+			return fee, nil
+		}
+		detailsErr = fmt.Errorf("fee estimate exceeds decimal(65,0) storage")
+	}
+	info, infoErr := GetPaymentQueryInfo(ctx, 0, encodedExtrinsic, hash, false)
+	if infoErr == nil {
+		return info.PartialFee, nil
+	}
+	return decimal.Zero, errors.Join(detailsErr, infoErr)
 }
 
-func GetPaymentQueryFeeDetails(_ context.Context, encodedExtrinsic, hash string) (feeDetails *PaymentQueryFeeDetails, err error) {
-	v := &model.JsonRpcResult{}
-	if err = websocket.SendWsRequest(nil, v, SystemPaymentQueryFeeDetails(rand.Intn(10000), util.AddHex(encodedExtrinsic), hash)); err != nil {
-		return
+// GetExtrinsicFee retains the legacy tuple helper. Core ingestion uses explicit
+// availability fields below. Actual fee is only from an event, never inferred
+// by scaling a fee with one component of WeightV2.
+func GetExtrinsicFee(ctx context.Context, raw, hash string, _ int, _, eventFee decimal.Decimal, _ bool) (decimal.Decimal, decimal.Decimal, error) {
+	actual := decimal.Zero
+	if !eventFee.IsNegative() {
+		actual = eventFee
 	}
-	if v.CheckErr() != nil {
-		return nil, InvalidValue
+	fee, err := estimateExtrinsicFee(ctx, raw, hash)
+	if eventFee.IsNegative() {
+		err = errors.Join(err, fmt.Errorf("actual fee unavailable"))
 	}
-	return feeDetails, util.UnmarshalAny(&feeDetails, v.Result)
+	return fee, actual, err
 }
 
-func GetExtrinsicFee(ctx context.Context, encodeExtrinsic, hash string, spec int, actualWeight, actualFeeByEvent decimal.Decimal, isV2Weight bool) (fee, actualFee decimal.Decimal, err error) {
-	var paymentInfo = new(PaymentQueryInfo)
-	feeDetails, err := GetPaymentQueryFeeDetails(ctx, encodeExtrinsic, hash)
-	if !actualFeeByEvent.IsPositive() {
-		paymentInfo, err = GetPaymentQueryInfo(ctx, spec, encodeExtrinsic, hash, isV2Weight)
-		if err != nil || paymentInfo == nil {
-			return decimal.Zero, actualFeeByEvent, err
-		}
-		if paymentInfo.Weight.IsZero() {
-			return decimal.Zero, decimal.Zero, nil
-		}
-		if !actualFeeByEvent.IsNegative() {
-			return paymentInfo.PartialFee, actualFeeByEvent, nil
-		}
-		if actualWeight.Equal(paymentInfo.Weight) {
-			return paymentInfo.PartialFee, paymentInfo.PartialFee, nil
-		}
+func enrichExtrinsicFee(ctx context.Context, e *core.ChainExtrinsic, raw string, block *core.ChainBlock, events []core.ChainEvent) {
+	e.Fee, e.UsedFee = decimal.Zero, decimal.Zero
+	e.FeeStateHash, e.UsedFeeStateHash, e.FeeError = "", "", ""
+	e.FeeStatus, e.UsedFeeStatus = core.FeeUnknown, core.FeeUnknown
+	eventFee, eventErr := core.ActualFeeFromEvents(events)
+	if eventFee != nil {
+		e.UsedFee = *eventFee
+		e.UsedFeeStatus = core.FeeAvailable
+		e.UsedFeeStateHash = block.Hash
 	}
-	if feeDetails == nil || feeDetails.InclusionFee == nil {
-		return decimal.Zero, decimal.Zero, err
+	version, versionErr := extrinsicWireVersion(raw)
+	if versionErr != nil {
+		e.FeeError = versionErr.Error()
+		return
 	}
-	finalFee := feeDetails.EstimateFee()
-	if paymentInfo.Weight.IsPositive() {
-		actualFeeByEvent = feeDetails.ActualFee(paymentInfo.Weight, actualWeight)
+	if version == 0x04 || version == 0x05 {
+		e.FeeStatus = core.FeeNotApplicable
+		if eventFee == nil && eventErr == nil {
+			e.UsedFeeStatus = core.FeeNotApplicable
+		}
+		if eventErr != nil {
+			e.FeeError = eventErr.Error()
+		}
+		return
 	}
-	return finalFee, actualFeeByEvent, nil
+	// General V5 extrinsics are not signed, but may still pay fees.
+	e.FeeStateHash = block.ParentHash
+	fee, estimateErr := estimateExtrinsicFee(ctx, raw, block.ParentHash)
+	if estimateErr == nil {
+		e.Fee = fee
+		e.FeeStatus = core.FeeEstimated
+	}
+	if err := errors.Join(eventErr, estimateErr); err != nil {
+		e.FeeError = err.Error()
+	}
 }

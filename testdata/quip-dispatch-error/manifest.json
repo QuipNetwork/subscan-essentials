@@ -1,0 +1,15 @@
+{
+  "source": "fresh disposable ordinary --dev node; 2026-10-15",
+  "nodeVersion": "0.4.0-a15e0244f13",
+  "genesisHash": "0x274008bb70ea4875e8dee64b1268c3c35b350f6f2eda4d69828100dca53d3ccd",
+  "blockNumber": 15,
+  "blockHash": "0x52ba04fb777ee27401fe6b90bd81142db1fa5ddb5f9048fd6725dd402539a6e3",
+  "parentHash": "0xa779edc1c39fa65792ca535ed81d1d4d534683a8b8916327f461ad5d79c7093f",
+  "extrinsicIndex": 1,
+  "codeSha256": "d1126490ef240f287b4b691a1117216495b157d846b667712b6afc105f5aeaa8",
+  "metadataSha256": "c37bbc6fd08ed2974dc1fb5ce7ae5bd28758e96df3bdef43c5da44ebcd2bc774",
+  "eventsSha256": "604935c9bda54dc5b1817c7ccd7aeec94bc34395e1a8637e8d93fc87f75b304d",
+  "expectedError": "Arithmetic.Underflow",
+  "specVersion": 119,
+  "transactionVersion": 7
+}

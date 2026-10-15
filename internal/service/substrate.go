@@ -8,7 +8,6 @@ import (
 	"github.com/itering/subscan/share/metrics"
 	"github.com/itering/subscan/util/mq"
 	"github.com/itering/substrate-api-rpc/model"
-	"github.com/itering/substrate-api-rpc/storage"
 	"sync"
 	"time"
 
@@ -99,21 +98,30 @@ const (
 	wsBlock
 	wsEvent
 	wsSpec
-	wsSessionIndex
 )
 
 func (s *Service) FillBlockData(ctx context.Context, blockNum uint, force bool) (err error) {
-	block := s.dao.GetBlockByNum(ctx, blockNum)
-	if block != nil && block.Finalized && !block.CodecError && !force {
-		return nil
-	}
 	defer func() {
 		if err != nil {
 			metrics.SubBlockFillError.Inc()
 		}
 	}()
+	block := s.dao.GetBlockByNum(ctx, blockNum)
+	if block != nil && block.Finalized && !block.CodecError && !force {
+		// Recover publication after a crash, lost Redis reply, or ambiguous commit.
+		return s.completeCoreBlock(ctx, blockNum)
+	}
 
-	conn := s.dbStorage.RPCPool().Conn
+	connection, err := websocket.Init()
+	if err != nil {
+		return fmt.Errorf("block RPC connection: %w", err)
+	}
+	defer func() {
+		if connection != nil {
+			_ = connection.Close()
+		}
+	}()
+	conn := connection.Conn
 	now := time.Now()
 	v := &model.JsonRpcResult{}
 
@@ -135,59 +143,44 @@ func (s *Service) FillBlockData(ctx context.Context, blockNum uint, force bool) 
 	if rpcBlock == nil {
 		return errors.New("nil block data")
 	}
+	executionHash, headerNum, err := executionStateHash(blockHash, &rpcBlock.Block)
+	if err != nil {
+		return err
+	}
+	if headerNum != blockNum {
+		return fmt.Errorf("requested block %d, received header %d", blockNum, headerNum)
+	}
 
 	// event
 	if err = websocket.SendWsRequest(conn, v, rpc.StateGetStorage(wsEvent, util.EventStorageKey, blockHash)); err != nil {
 		return fmt.Errorf("websocket send error: %v", err)
 	}
-	event, _ := v.ToString()
-	if event == "" && blockNum > 0 {
-		return errors.New("nil event data")
+	event, err := v.ToString()
+	if err != nil {
+		return fmt.Errorf("block %d event storage: %w", blockNum, err)
 	}
-
-	// runtime
-	if err = websocket.SendWsRequest(conn, v, rpc.ChainGetRuntimeVersion(wsSpec, blockHash)); err != nil {
-		return fmt.Errorf("websocket send error: %v", err)
-	}
-	var specVersion int
-
-	if r := v.ToRuntimeVersion(); r == nil {
-		specVersion = s.GetCurrentRuntimeSpecVersion(blockNum)
-	} else {
-		specVersion = r.SpecVersion
-		_ = s.regRuntimeVersion(ctx, r.ImplName, specVersion, blockNum, blockHash)
-	}
-
-	if specVersion > util.CurrentRuntimeSpecVersion {
-		util.CurrentRuntimeSpecVersion = specVersion
-	}
-
-	if specVersion == -1 {
-		return errors.New("nil runtime version")
-	}
-
-	// session index
-	if err = websocket.SendWsRequest(conn, v, rpc.StateGetStorage(wsSessionIndex, util.SessionIndexStorageKey, blockHash)); err != nil {
-		return fmt.Errorf("websocket send error: %v", err)
-	}
-
-	var sessionIndex uint
-	sessionIndexData, err := v.ToString()
-	if err == nil || sessionIndexData != "" {
-		r, _, err := storage.Decode(sessionIndexData, "U32", nil)
-		if err == nil {
-			sessionIndex = uint(r.ToInt())
+	if event == "" {
+		if blockNum != 0 || len(rpcBlock.Block.Extrinsics) != 0 {
+			return errors.New("nil event data")
 		}
+		// Genesis has no executed body or events; absent event storage is the
+		// empty vector, not a request to decode with a zero parent hash.
+		event = "0x00"
 	}
 
-	var setFinalized = func() {
-		_ = s.dao.SaveFillAlreadyFinalizedBlockNum(context.TODO(), int(blockNum))
+	execution, err := s.registerBlockRuntimes(ctx, conn, blockNum, blockHash, executionHash)
+	if err != nil {
+		return err
 	}
+
+	// Return the loader connection before enrichment borrows from the same
+	// bounded pool. Keeping it would deadlock when all workers hold one slot.
+	_ = connection.Close()
+	connection = nil
+
 	// for Create
-	if err = s.CreateChainBlock(ctx, blockHash, &rpcBlock.Block, event, specVersion, sessionIndex); err == nil {
-		_ = s.dao.SaveFillAlreadyBlockNum(ctx, int(blockNum))
+	if err = s.CreateChainBlock(ctx, blockHash, &rpcBlock.Block, event, execution.SpecVersion, 0); err == nil {
 		util.Logger().Debug(fmt.Sprintf("Fill Block num %d hash %s use %d ms", blockNum, blockHash, time.Since(now).Milliseconds()))
-		setFinalized()
 	} else {
 		log.Printf("Create chain block error %v", err)
 	}

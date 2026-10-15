@@ -30,15 +30,11 @@ func (s *Service) createExtrinsic(ctx context.Context,
 		extrinsics[index].ExtrinsicHash = util.AddHex(extrinsic.ExtrinsicHash)
 		extrinsics[index].ParamsRawBytes = util.HexToBytes(extrinsic.ParamsRaw)
 		extrinsics[index].Params = nil
-		if extrinsic.Signature != "" {
-			extrinsics[index].IsSigned = true
+		if extrinsic.IsSigned {
 			countSignedExtrinsic++
-			weight, actualFee, isV2Weight := model.CheckoutWeight(eventMap[extrinsics[index].ExtrinsicIndex])
-			extrinsics[index].Fee, extrinsics[index].UsedFee, err = GetExtrinsicFee(ctx, encodeExtrinsics[index], block.ParentHash, block.SpecVersion, weight, actualFee, isV2Weight)
-			if err != nil {
-				util.Logger().Error(fmt.Errorf("extrinsic %s GetExtrinsicFee err %v", extrinsic.ExtrinsicIndex, err))
-			}
 		}
+		enrichExtrinsicFee(ctx, &extrinsics[index], encodeExtrinsics[index], block, eventMap[extrinsics[index].ExtrinsicIndex])
+
 		extrinsics[index].ID = extrinsics[index].Id()
 	}
 	if err = s.dao.CreateExtrinsic(ctx, txn, extrinsics, countSignedExtrinsic); err != nil {
@@ -60,7 +56,7 @@ func (s *Service) ExtrinsicsAsJson(e *model.ChainExtrinsic) *model.ChainExtrinsi
 		AccountId:          address.Encode(e.AccountId),
 		Signature:          e.Signature,
 		Nonce:              e.Nonce,
-		Fee:                e.Fee,
+		FeeInfo:            e.FeeInfo(),
 	}
 	return ej
 }
@@ -82,15 +78,23 @@ func FindOutBlockTime(extrinsics []model.ChainExtrinsic) int {
 	return 0
 }
 
-func (s *Service) getExtrinsicSuccess(e []model.ChainEvent) bool {
-	for _, event := range e {
-		if strings.EqualFold(event.ModuleId, "system") {
-			if !strings.EqualFold(event.EventId, "ExtrinsicSuccess") || !strings.EqualFold(event.EventId, "ExtrinsicFailed") {
-				continue
-			} else {
-				return strings.EqualFold(event.EventId, "ExtrinsicSuccess")
-			}
+// getExtrinsicSuccess reports confirmed outer dispatch success. Missing or
+// ambiguous outcomes are not success; false alone is not proof of dispatch failure.
+func (s *Service) getExtrinsicSuccess(events []model.ChainEvent) bool {
+	seen, success := false, false
+	for _, event := range events {
+		if event.Phase != 0 || !strings.EqualFold(event.ModuleId, "system") {
+			continue
 		}
+		isSuccess := strings.EqualFold(event.EventId, "ExtrinsicSuccess")
+		isFailure := strings.EqualFold(event.EventId, "ExtrinsicFailed")
+		if !isSuccess && !isFailure {
+			continue
+		}
+		if seen {
+			return false
+		}
+		seen, success = true, isSuccess
 	}
-	return true
+	return seen && success
 }

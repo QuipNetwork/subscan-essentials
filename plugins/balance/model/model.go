@@ -1,17 +1,60 @@
 package model
 
 import (
+	"encoding/json"
+
 	"github.com/shopspring/decimal"
 )
 
-type Account struct {
-	ID       uint            `gorm:"primary_key" json:"-"`
-	Address  string          `gorm:"default: null;size:100;index:address,unique;index:balance_address,priority:2" json:"address"`
-	Nonce    int             `json:"nonce"`
-	Balance  decimal.Decimal `json:"balance" gorm:"type:decimal(65,0);index:balance;index:balance_address,priority:1"`
-	Locked   decimal.Decimal `json:"locked" gorm:"type:decimal(65,0);"`
-	Reserved decimal.Decimal `json:"reserved" gorm:"type:decimal(65,0);"`
+type ProjectionCounts struct {
+	ID          uint  `gorm:"primaryKey;autoIncrement:false"`
+	Initialized bool  `gorm:"not null"`
+	Transfers   int64 `gorm:"not null"`
+	Accounts    int64 `gorm:"not null"`
 }
+
+func (ProjectionCounts) TableName() string { return "balance_projection_counts" }
+
+type Account struct {
+	ID      uint   `gorm:"primary_key" json:"-"`
+	Address string `gorm:"default: null;size:100;index:address,unique;index:balance_address,priority:2" json:"address"`
+	AccountState
+}
+
+// AccountState is one observation at a finalized block's post-state. Amounts
+// and nonce are nullable: unavailable state must never look like a zero balance.
+type AccountState struct {
+	Nonce            *uint32          `json:"nonce"`
+	Balance          *decimal.Decimal `json:"balance" gorm:"type:decimal(65,0);index:balance;index:balance_address,priority:1"`
+	Locked           *decimal.Decimal `json:"locked" gorm:"type:decimal(65,0)"`
+	Reserved         *decimal.Decimal `json:"reserved" gorm:"type:decimal(65,0)"`
+	StateStatus      string           `json:"state_status" gorm:"size:24;default:unknown"`
+	StateHash        string           `json:"state_hash" gorm:"size:100"`
+	StateBlockNum    *uint            `json:"state_block_num"`
+	StateSpecVersion *int             `json:"state_spec_version"`
+	StateError       string           `json:"state_error" gorm:"type:text"`
+}
+
+func (a Account) MarshalJSON() ([]byte, error) {
+	type wire Account
+	if a.StateStatus == "" {
+		a.StateStatus = "unknown"
+	}
+	if a.StateStatus != "available" {
+		a.Nonce, a.Balance, a.Locked, a.Reserved = nil, nil, nil, nil
+	}
+	return json.Marshal(wire(a))
+}
+
+// Keep older observations too: an out-of-order unknown observation must be
+// durable without replacing the latest account view.
+type AccountObservation struct {
+	Address         string `gorm:"primaryKey;size:100"`
+	ObservationHash string `gorm:"primaryKey;size:100"`
+	AccountState
+}
+
+func (AccountObservation) TableName() string { return "balance_account_observations" }
 
 func (a *Account) TableName() string {
 	return "balance_accounts"

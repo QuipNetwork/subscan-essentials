@@ -37,7 +37,7 @@ func TestDao_GetBlockByNum(t *testing.T) {
 }
 
 func TestDao_UpdateEventAndExtrinsic(t *testing.T) {
-	txn := testDao.DbBegin()
+	txn, _ := testDao.DbBegin()
 	err := testDao.UpdateEventAndExtrinsic(txn, &testBlock, 1, 2, 1594791900, "60e2feb892e672d5579ed10ecae0d162031fe5adc3692498ad262fb126a65732", false, true)
 	assert.NoError(t, err)
 	txn.Commit()
@@ -46,7 +46,7 @@ func TestDao_UpdateEventAndExtrinsic(t *testing.T) {
 }
 
 func TestDao_GetNearBlock(t *testing.T) {
-	txn := testDao.DbBegin()
+	txn, _ := testDao.DbBegin()
 	ctx := context.TODO()
 	_ = testDao.CreateBlock(ctx, txn, &model.ChainBlock{BlockNum: 947688, Hash: "0xd68b38c412404a4b5d4974e6dbb4a491ed7b6200d4edc24152693804441ce999"})
 	txn.Commit()

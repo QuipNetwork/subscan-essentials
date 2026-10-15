@@ -54,10 +54,12 @@ func (a *System) ProcessExtrinsic(*storage.Block, *storage.Extrinsic, []storage.
 
 func (a *System) ProcessEvent(block *storage.Block, event *storage.Event, _ decimal.Decimal) error {
 	var paramEvent []storage.EventParam
-	_ = util.UnmarshalAny(&paramEvent, event.Params)
+	if err := util.UnmarshalAny(&paramEvent, event.Params); err != nil {
+		return err
+	}
 	switch event.EventId {
 	case "ExtrinsicFailed":
-		srv.ExtrinsicFailed(block.SpecVersion, event, paramEvent)
+		return srv.ExtrinsicFailed(block.SpecVersion, event, paramEvent)
 	}
 	return nil
 }
