@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/itering/scale.go/types"
+	"github.com/itering/scale.go/types/scaleBytes"
 	"github.com/itering/subscan-plugin/storage"
 	"github.com/itering/subscan/plugins/system/model"
 	"github.com/itering/subscan/share/state"
@@ -25,6 +27,84 @@ type projectionStorage struct {
 	err error
 	row *model.ExtrinsicError
 	raw string
+}
+
+func TestNativeDispatchErrorVariants(t *testing.T) {
+	for _, value := range []interface{}{
+		map[string]interface{}{"Arithmetic": "NotAnError"},
+		map[string]interface{}{"Arithmetic": nil},
+		map[string]interface{}{"Arithmetic": 0},
+		map[string]interface{}{"Arithmetic": map[string]interface{}{"Underflow": nil}},
+		map[string]interface{}{"Arithmetic": "Underflow", "Token": "Frozen"},
+		map[string]interface{}{"UnknownCategory": "Underflow"},
+	} {
+		d := new(projectionStorage)
+		require.Error(t, New(d).ExtrinsicFailed(119, &storage.Event{}, []storage.EventParam{{Type: "sp_runtime:DispatchError", Value: value}}))
+		require.Nil(t, d.row)
+	}
+	root := os.Getenv("QUIP_CONFORMANCE_FIXTURES")
+	if root == "" {
+		t.Skip("requires QUIP_CONFORMANCE_FIXTURES")
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "local-119", "metadata-107.scale"))
+	require.NoError(t, err)
+	require.Equal(t, "c37bbc6fd08ed2974dc1fb5ce7ae5bd28758e96df3bdef43c5da44ebcd2bc774", fmt.Sprintf("%x", sha256.Sum256(raw)))
+	md, err := state.RegisterCheckedMetadata(&metadata.RuntimeRaw{Spec: 119, Raw: "0x" + hex.EncodeToString(raw)})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		bytes []byte
+		name  string
+	}{
+		{[]byte{0}, "Other"}, {[]byte{1}, "CannotLookup"}, {[]byte{2}, "BadOrigin"},
+		{[]byte{4}, "ConsumerRemaining"}, {[]byte{5}, "NoProviders"}, {[]byte{6}, "TooManyConsumers"},
+		{[]byte{10}, "Exhausted"}, {[]byte{11}, "Corruption"}, {[]byte{12}, "Unavailable"}, {[]byte{13}, "RootNotAllowed"},
+		{[]byte{8, 0}, "Arithmetic.Underflow"}, {[]byte{8, 1}, "Arithmetic.Overflow"}, {[]byte{8, 2}, "Arithmetic.DivisionByZero"},
+		{[]byte{7, 0}, "Token.FundsUnavailable"}, {[]byte{7, 5}, "Token.Frozen"}, {[]byte{7, 9}, "Token.Blocked"},
+		{[]byte{9, 0}, "Transactional.LimitReached"}, {[]byte{9, 1}, "Transactional.NoLayer"},
+		{[]byte{14, 4}, "Trie.InvalidHash"}, {[]byte{14, 13}, "Trie.DecodeError"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decoder := types.ScaleDecoder{}
+			decoder.Init(scaleBytes.ScaleBytes{Data: tc.bytes}, &types.ScaleDecoderOption{Spec: 119, Metadata: (*types.MetadataStruct)(md)})
+			value := decoder.ProcessAndUpdateData("sp_runtime:DispatchError")
+			require.Zero(t, decoder.Data.GetRemainingLength())
+			d := new(projectionStorage)
+			e := &storage.Event{BlockNum: 15, ExtrinsicIdx: 1}
+			params := []storage.EventParam{{Type: "sp_runtime:DispatchError", Value: value}}
+			require.NoError(t, New(d).ExtrinsicFailed(119, e, params), "%#v", value)
+			require.Equal(t, tc.name, d.row.Name)
+			require.Empty(t, d.row.Module, "non-module errors must not invent a pallet")
+			d.err = errors.New("injected persistence failure")
+			require.ErrorIs(t, New(d).ExtrinsicFailed(119, e, params), d.err)
+		})
+	}
+	// Actual failed transfer from a fresh ordinary node; independent polkadot-js
+	// decoding reports Arithmetic.Underflow. Provenance accompanies these bytes.
+	eventsRaw, err := os.ReadFile("../../../testdata/quip-dispatch-error/events-15.scale")
+	require.NoError(t, err)
+	require.Equal(t, "604935c9bda54dc5b1817c7ccd7aeec94bc34395e1a8637e8d93fc87f75b304d", fmt.Sprintf("%x", sha256.Sum256(eventsRaw)))
+	decoded, err := substrate.DecodeEvent("0x"+hex.EncodeToString(eventsRaw), md, 119)
+	require.NoError(t, err)
+	var events []struct {
+		Name   string               `json:"event_id"`
+		Index  int                  `json:"extrinsic_idx"`
+		Params []storage.EventParam `json:"params"`
+	}
+	require.NoError(t, util.UnmarshalAny(&events, decoded))
+	require.Len(t, events, 11)
+	failures := 0
+	for _, event := range events {
+		if event.Name != "ExtrinsicFailed" {
+			continue
+		}
+		d := new(projectionStorage)
+		require.Equal(t, 1, event.Index)
+		require.NoError(t, New(d).ExtrinsicFailed(119, &storage.Event{BlockNum: 15, ExtrinsicIdx: event.Index}, event.Params))
+		require.Equal(t, "Arithmetic.Underflow", d.row.Name)
+		require.Empty(t, d.row.Module)
+		failures++
+	}
+	require.Equal(t, 1, failures)
 }
 
 func (d *projectionStorage) SpecialMetadata(int) string { return d.raw }

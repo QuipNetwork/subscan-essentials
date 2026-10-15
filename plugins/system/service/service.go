@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/itering/subscan-plugin/storage"
@@ -45,20 +46,28 @@ func (s *Service) ExtrinsicFailed(spec int, event *storage.Event, paramEvent []s
 	return fmt.Errorf("unsupported dispatch error at %s", genExtrinsicIndex(event))
 }
 
-// dispatchError accepts legacy numeric module errors and portable ModuleError's
-// four SCALE bytes. The first byte is the pallet error variant; the remaining
+// Fieldless DispatchError and nested error enums in SDK 845eb998 (runtime 119).
+// Keep the category in the stored name: these are not pallet/module errors.
+var dispatchErrorNames = map[string][]string{
+	"":              {"Other", "CannotLookup", "BadOrigin", "ConsumerRemaining", "NoProviders", "TooManyConsumers", "Exhausted", "Corruption", "Unavailable", "RootNotAllowed"},
+	"Arithmetic":    {"Underflow", "Overflow", "DivisionByZero"},
+	"Token":         {"FundsUnavailable", "OnlyProvider", "BelowMinimum", "CannotCreate", "UnknownAsset", "Frozen", "Unsupported", "CannotCreateHold", "NotExpendable", "Blocked"},
+	"Transactional": {"LimitReached", "NoLayer"},
+	"Trie":          {"InvalidStateRoot", "IncompleteDatabase", "ValueAtIncompleteKey", "DecoderError", "InvalidHash", "DuplicateKey", "ExtraneousNode", "ExtraneousValue", "ExtraneousHashReference", "InvalidChildReference", "ValueMismatch", "IncompleteProof", "RootMismatch", "DecodeError"},
+}
+
+// dispatchError validates named variants and accepts legacy numeric module
+// errors and portable ModuleError's four SCALE bytes. The first byte is the pallet error variant; the remaining
 // bytes may contain variant fields and must not be interpreted as an integer.
 func dispatchError(value interface{}) (moduleIndex, errorIndex int, name string, err error) {
 	bad := func() (int, int, string, error) {
 		return 0, 0, "", fmt.Errorf("unsupported or malformed dispatch error")
 	}
 	if text, ok := value.(string); ok {
-		switch text {
-		case "BadOrigin", "CannotLookup", "Other":
+		if slices.Contains(dispatchErrorNames[""], text) {
 			return 0, 0, text, nil
-		default:
-			return bad()
 		}
+		return bad()
 	}
 	var fields map[string]json.RawMessage
 	if err := util.UnmarshalAny(&fields, value); err != nil {
@@ -104,9 +113,22 @@ func dispatchError(value interface{}) (moduleIndex, errorIndex int, name string,
 		}
 		return m, int(data[0]), "", nil
 	}
-	for _, name := range []string{"BadOrigin", "CannotLookup", "Other"} {
-		if raw, ok := fields[name]; ok && string(raw) == "null" {
+	for _, name := range dispatchErrorNames[""] {
+		// The native portable unit codec emits the literal string "NULL";
+		// older decoders used JSON null or a bare variant name.
+		if raw, ok := fields[name]; ok && (string(raw) == "null" || string(raw) == `"NULL"`) {
 			return 0, 0, name, nil
+		}
+	}
+	for kind, names := range dispatchErrorNames {
+		if kind == "" {
+			continue
+		}
+		if raw, ok := fields[kind]; ok {
+			var name string
+			if json.Unmarshal(raw, &name) == nil && slices.Contains(names, name) {
+				return 0, 0, kind + "." + name, nil
+			}
 		}
 	}
 	return bad()
