@@ -145,8 +145,8 @@ func TestArchivedPrimaryBabeHeader(t *testing.T) {
 		require.Equal(t, byte(1), payload[0])
 		require.Equal(t, 2, provenance.AuthorityIndex)
 		require.EqualValues(t, provenance.AuthorityIndex, binary.LittleEndian.Uint32(payload[1:5]))
-		// Synthetic labels test index mapping only; this capture does not include
-		// Session.Validators at this exact hash, so no account attribution claim.
+		// Synthetic labels isolate index mapping here. The separate captured
+		// enrichment test uses Session.Validators recorded at this exact hash.
 		validators := []string{strings.Repeat("11", 32), strings.Repeat("22", 32), strings.Repeat("33", 32)}
 		author, err := authorFromDigest(data, validators)
 		require.NoError(t, err)

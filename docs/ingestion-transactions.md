@@ -254,9 +254,9 @@ cause endless automatic retries. SQL/Redis failures still leave projections
 pending. `InitAccount` pins the finalized height reported by the storage DAO,
 requires that block to be indexed, and enumerates/reads at its hash, and `InitTransfer` passes the original finalized blocks
 when replaying events. Neither command reads unpinned latest account values.
-Real archived auxiliary replay, UI rendering and actual-image acceptance remain
+Historical account capture, UI rendering and actual-image acceptance remain
 integration work; synthetic account values in unit tests are not historical
-account evidence.
+account evidence. The captured fee/session/author replay below is separate.
 
 ### EVM startup network access
 
@@ -272,3 +272,53 @@ backend, while `UI.enable_evm` controls presentation only. Quip's deployment mus
 continue excluding the EVM plugin from registration. Actual-image acceptance
 must verify that exclusion together with zero `eth_*` traffic; the startup tests
 are not a substitute for that integration check.
+
+### Captured auxiliary replay
+
+`TestCapturedAuxiliaryBlockReplay` verifies all 144 request/response hashes in
+RR's 2026-10-14 archival capture, then replays blocks 330109, 330110, 591863 and
+591865 through `FillBlockData`, actual decoders and enrichment, and an in-memory
+recording DAO. This covers 23 extrinsics, 95 events, 19 signed fee observations,
+11 failed outer dispatches, post-state session default zero and author mapping.
+It verifies parent-state fee estimates, block-state event-derived actual fees,
+prefixed 1660-byte signatures, and retries without new RPC or duplicate rows.
+It does not exercise real SQL, plugin projections or the actual image.
+
+The replay matches methods and complete params exactly. One explicit adaptation
+maps `state_getStorageAt(key, hash)` to the archive's `state_getStorage(key, hash)`;
+there is no runtime or metadata method substitution. Runtime requests use the
+captured native `state_getRuntimeVersion` results. The three HTTP 413 records
+for the oversized upgrade extrinsic are verified, then replaced by RR's three
+SHA-pinned successful WebSocket responses to the identical requests. This does
+not simulate HTTP 413 as a node error. The production query-info decoder also
+preserves the captured u64 proof size 14941862699704748992 exactly.
+
+The large archive remains an external test input to avoid duplicating its
+28 MB of existing evidence. Set `QUIP_AUXILIARY_CAPTURES` to its directory with
+`responses/` and `responses-ws/`. Missing files, changed hashes or uncaptured RPC
+requests fail the test; the test is skipped only when the variable is unset.
+The primary manifest SHA is
+`f19329bf8e57e616b472ec75f70557d0118051fd169a497585b9042f3e79474a`;
+the WebSocket supplement manifest SHA is
+`d94302fda681a585bddbc5832f4a95b220772ebb8c87e9911b90b0cba5c45ad1`.
+
+`TestCapturedPrimaryBabeEnrichment` uses the committed exact-hash capture in
+`testdata/quip-babe/primary-aux` together with the captured PrimaryVRF header.
+Its real V16 metadata and session state attribute authority index 2 to the
+captured validator account; no synthetic validator labels or method aliases
+are used. This test is self-contained after selecting the reviewed forks.
+
+Run both with a temporary modfile replacing scale.go and substrate-api-rpc by
+their reviewed checkouts (repository dependency pins are a later gate):
+
+```sh
+QUIP_PRIMARY_AUXILIARY_REPLAY=1 \
+QUIP_AUXILIARY_CAPTURES=/path/to/quip-subscan-rr-archive-capture-20261014 \
+go test -modfile=/path/to/reviewed.mod ./internal/service \
+  -run '^TestCaptured(PrimaryBabeEnrichment|AuxiliaryBlockReplay)$' -count=1
+```
+
+The lost local-119 auxiliary state is not reconstructed from nearby blocks.
+These replays establish neither local-119 historical availability nor fresh-node
+session rotation; existing unknown-state and native transition tests cover those
+separate contracts.
