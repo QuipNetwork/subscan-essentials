@@ -4,8 +4,12 @@ import (
 	"context"
 	"github.com/itering/subscan/model"
 	"github.com/itering/subscan/util"
+	"github.com/itering/subscan/util/mq"
+	substrate "github.com/itering/substrate-api-rpc"
+	"github.com/itering/substrate-api-rpc/metadata"
 	rpcModel "github.com/itering/substrate-api-rpc/model"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"testing"
 )
 
@@ -28,8 +32,77 @@ func TestService_CreateChainBlock(t *testing.T) {
 			},
 		},
 	}
-	err := testSrv.CreateChainBlock(context.TODO(), hash, &block, event, 4, 1)
-	assert.NoError(t, err)
+
+	observedService := func(t *testing.T) (*Service, *blockIntegrityDao, *blockIntegrityQueue) {
+		t.Helper()
+		d := &blockIntegrityDao{
+			extrinsics: map[uint]model.ChainExtrinsic{},
+			events:     map[uint]model.ChainEvent{},
+			blocks:     map[uint]model.ChainBlock{},
+		}
+		q := &blockIntegrityQueue{dao: d}
+		previousQueue := mq.Instant
+		mq.Instant = q
+		t.Cleanup(func() { mq.Instant = previousQueue })
+		return &Service{dao: d}, d, q
+	}
+
+	t.Run("reject incompatible legacy event fixture", func(t *testing.T) {
+		// Preserve the original input as a negative regression. Its event
+		// records encode eight-byte weights, but the default legacy registry
+		// defines Weight as u32. Metadata V11 names DispatchInfo without
+		// supplying a portable definition that could resolve that mismatch.
+		// Previously CreateChainBlock logged the failure and returned success.
+		m, metadataErr := testSrv.getMetadataInstant(4, "")
+		require.NoError(t, metadataErr)
+		require.Equal(t, 11, m.MetadataVersion)
+		require.Equal(t, []string{"DispatchInfo"}, m.EventIndex["0000"].Call.Args)
+		decoded, err := substrate.DecodeExtrinsic(block.Extrinsics, m, 4)
+		require.NoError(t, err, "the original extrinsic body still decodes")
+		require.Len(t, decoded, 2)
+		decodedEvents, eventErr := substrate.DecodeEvent(event, m, 4)
+		if eventErr == nil {
+			_, _, eventErr = convertBlockData(block.Extrinsics, event, decoded, decodedEvents)
+		}
+		require.Error(t, eventErr, "the original event/registry pairing must fail")
+
+		s, d, q := observedService(t)
+		err = s.CreateChainBlock(context.Background(), hash, &block, event, 4, 1)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "block 1073882")
+		require.Empty(t, d.actions, "no transaction, cache, writes or progress")
+		require.False(t, d.committed)
+		require.Empty(t, d.blocks)
+		require.Empty(t, d.extrinsics)
+		require.Empty(t, d.events)
+		require.Zero(t, q.calls)
+	})
+
+	t.Run("valid metadata-paired block", func(t *testing.T) {
+		// Synthetic input with an explicit matching metadata definition;
+		// no fee/author RPC, database server or public chain is involved.
+		validBlock, validEvents, m := integrityInputs(t)
+		const spec = 900002
+		previous := metadata.RuntimeMetadata[spec]
+		metadata.RuntimeMetadata[spec] = m
+		t.Cleanup(func() {
+			if previous == nil {
+				delete(metadata.RuntimeMetadata, spec)
+			} else {
+				metadata.RuntimeMetadata[spec] = previous
+			}
+		})
+		s, d, q := observedService(t)
+		require.NoError(t, s.CreateChainBlock(context.Background(), "synthetic-block", validBlock, validEvents, spec, 0))
+		require.True(t, d.committed)
+		require.Len(t, d.blocks, 1)
+		require.Len(t, d.extrinsics, 3)
+		require.Len(t, d.events, 3)
+		require.Equal(t, 3, d.blocks[42].ExtrinsicsCount)
+		require.Equal(t, 3, d.blocks[42].EventCount)
+		require.False(t, d.blocks[42].CodecError)
+		require.Positive(t, q.calls, "notifications are emitted after commit")
+	})
 
 }
 
@@ -53,6 +126,7 @@ func TestService_GetBlocksSampleByNums(t *testing.T) {
 	util.AddressType = "42"
 	blocks, _ := testSrv.GetBlocksSampleCursor(context.TODO(), 10, 0, 0)
 	assert.Equal(t, []model.SampleBlockJson{{
+		BlockStateInfo: model.BlockStateInfo{SessionStatus: model.StateUnknown, AuthorStatus: model.StateUnknown},
 		BlockNum:       947687,
 		BlockTimestamp: 1594791900,
 		Hash:           "0xd68b38c412404a4b5d4974e6dbb4a491ed7b6200d4edc24152693804441ce99d",

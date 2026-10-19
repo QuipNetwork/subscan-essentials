@@ -183,15 +183,14 @@ type GormDB struct {
 	gdbDone bool
 }
 
-func (d *Dao) DbCommit(c *GormDB) {
+func (d *Dao) DbCommit(c *GormDB) error {
 	if c.gdbDone {
-		return
+		return sql.ErrTxDone
 	}
-	tx := c.Commit()
+	// A failed/ambiguous commit must never authorize cache publication.
+	err := c.Commit().Error
 	c.gdbDone = true
-	if err := tx.Error; err != nil && !errors.Is(err, sql.ErrTxDone) {
-		fmt.Println("Fatal error DbCommit", err)
-	}
+	return err
 }
 
 func (d *Dao) DbRollback(c *GormDB) {
@@ -206,12 +205,12 @@ func (d *Dao) DbRollback(c *GormDB) {
 }
 
 // dao funcs
-func (d *Dao) DbBegin() *GormDB {
+func (d *Dao) DbBegin() (*GormDB, error) {
 	txn := d.db.Begin()
 	if txn.Error != nil {
-		panic(txn.Error)
+		return nil, txn.Error
 	}
-	return &GormDB{txn, false}
+	return &GormDB{txn, false}, nil
 }
 
 type NamingStrategy struct {

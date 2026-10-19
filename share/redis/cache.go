@@ -122,11 +122,18 @@ func (d *Dao) GetCacheTtl(c context.Context, key string) int {
 }
 
 func (d *Dao) HmSet(c context.Context, key string, value interface{}) (err error) {
-	conn, _ := d.redis.GetContext(c)
+	conn, err := d.redis.GetContext(c)
+	if err != nil {
+		return err
+	}
 	defer conn.Close()
 	args := redis.Args{}.Add(key)
 	switch v := value.(type) {
 	case map[string]string:
+		for k, v := range v {
+			args = args.Add(k).Add(v)
+		}
+	case map[string]int64:
 		for k, v := range v {
 			args = args.Add(k).Add(v)
 		}
@@ -148,15 +155,19 @@ func (d *Dao) HmSet(c context.Context, key string, value interface{}) (err error
 	return
 }
 
-func (d *Dao) HmSetEx(c context.Context, key string, value interface{}, ttl int) (err error) {
-	conn, _ := d.redis.GetContext(c)
+func (d *Dao) HmSetEx(c context.Context, key string, value interface{}, ttl int) error {
+	if err := d.HmSet(c, key, value); err != nil {
+		return err
+	}
+	if ttl <= 0 {
+		return nil
+	}
+	conn, err := d.redis.GetContext(c)
+	if err != nil {
+		return err
+	}
 	defer conn.Close()
-	defer func() {
-		if ttl > 0 {
-			_ = conn.Send("EXPIRE", key, ttl)
-		}
-	}()
-	err = d.HmSet(c, key, value)
+	_, err = conn.Do("EXPIRE", key, ttl)
 	return err
 }
 

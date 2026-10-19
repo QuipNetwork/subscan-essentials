@@ -1,65 +1,110 @@
 package dao
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"strings"
+
 	"github.com/itering/subscan-plugin/storage"
 	"github.com/itering/subscan/model"
-	bModel "github.com/itering/subscan/plugins/balance/model"
-	"github.com/itering/subscan/share/substrate"
-	"github.com/itering/subscan/util"
-	"github.com/itering/subscan/util/address"
-	"github.com/panjf2000/ants/v2"
-	"github.com/shopspring/decimal"
+	"github.com/itering/subscan/share/state"
+	"github.com/itering/substrate-api-rpc/hasher"
+	rpcmodel "github.com/itering/substrate-api-rpc/model"
+	"github.com/itering/substrate-api-rpc/websocket"
 	"gorm.io/gorm"
-	"log"
-	"sync"
 )
 
-func InitAccount(sg *Storage) {
-	ctx := context.Background()
-	wg := new(sync.WaitGroup)
-	bp, _ := ants.NewPoolWithFunc(10, func(i interface{}) {
-		wg.Add(1)
-		defer wg.Done()
-		params := i.([]interface{})
-		addr := params[0].(string)
-		info := params[1].(*bModel.AccountData)
-		sg.AddOrUpdateItem(ctx, &bModel.Account{
-			Address:  addr,
-			Nonce:    info.Nonce,
-			Balance:  info.Data.Free.Add(info.Data.Reserved),
-			Locked:   decimal.Max(info.Data.MiscFrozen, info.Data.FeeFrozen),
-			Reserved: info.Data.Reserved,
-		}, []string{"address"}, "nonce", "balance", "locked", "reserved")
-	})
-	defer bp.Release()
-
-	// refresh account balance
-	if err := substrate.BatchReadKeysPaged(ctx, "System", "Account", "", func(keys []string, scaleType string) error {
-		r, _ := substrate.BatchStorageByKey(ctx, keys, scaleType, "")
-		for key, v := range r {
-			val, _ := substrate.ParseStorageKey(key)
-			addr := address.Format(val[0].ToString())
-			accountData := new(bModel.AccountData)
-			v.ToAny(accountData)
-			util.Logger().Error(bp.Invoke([]interface{}{addr, accountData}))
+// InitAccount pins the finalized height reported by the storage DAO and requires
+// that block to be indexed. Enumeration and reads remain at that hash.
+func InitAccount(sg *Storage) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("account initialization: %v", r)
 		}
-		return nil
-	}); err != nil {
-		log.Panic(err)
+	}()
+	ctx := context.Background()
+	height, err := sg.Dao.GetCurrentBlockNum(ctx)
+	if err != nil {
+		return err
 	}
-	wg.Wait()
+	blocks := sg.Dao.GetBlocksByNums(ctx, []uint{uint(height)}, "*")
+	if len(blocks) != 1 || !blocks[0].Finalized || blocks[0].Hash == "" {
+		return fmt.Errorf("indexed finalized block required for account initialization")
+	}
+	block := blocks[0]
+	runtime, err := state.RuntimeVersionAt(nil, block.Hash)
+	if err != nil {
+		return err
+	}
+	m, err := state.MetadataAt(runtime.SpecVersion, block.Hash)
+	if err != nil {
+		return err
+	}
+	_, prefix, _, hashName, err := accountStorage(m, runtime.SpecVersion)
+	if err != nil {
+		return err
+	}
+	switch hashName {
+	case "Blake2_128Concat", "Twox64Concat", "Identity":
+	default:
+		return fmt.Errorf("account enumeration requires a reversible map hasher")
+	}
+	prefixHex := "0x" + hex.EncodeToString(prefix)
+	start := prefixHex
+	for {
+		request, _ := json.Marshal(rpcmodel.JsonRpcParams{Id: 19403, JsonRpc: "2.0", Method: "state_getKeysPaged", Params: []interface{}{prefixHex, 256, start, block.Hash}})
+		var response struct {
+			Result *[]string       `json:"result"`
+			Error  *rpcmodel.Error `json:"error"`
+		}
+		if err := websocket.SendWsRequest(nil, &response, request); err != nil {
+			return err
+		}
+		if response.Error != nil {
+			return fmt.Errorf("account key RPC: %s", response.Error.Message)
+		}
+		if response.Result == nil {
+			return fmt.Errorf("missing account key result")
+		}
+		if len(*response.Result) == 0 {
+			return nil
+		}
+		for _, key := range *response.Result {
+			if key <= start {
+				return fmt.Errorf("non-increasing account key page")
+			}
+			raw, err := hex.DecodeString(strings.TrimPrefix(key, "0x"))
+			if err != nil || len(raw) < 32 {
+				return fmt.Errorf("invalid account key")
+			}
+			account := raw[len(raw)-32:]
+			expected := append(append([]byte{}, prefix...), hasher.HashByCryptoName(account, hashName)...)
+			if !bytes.Equal(raw, expected) {
+				return fmt.Errorf("account key does not match metadata")
+			}
+			if err := RefreshAccount(ctx, sg, block, hex.EncodeToString(account)); err != nil {
+				return err
+			}
+			start = key
+		}
+	}
 }
 
 func RefreshAllAccount(_ *Storage) {
 
 }
 
-func InitTransfer(sg *Storage) {
+func InitTransfer(sg *Storage) error {
 	c := context.TODO()
 	db := sg.Dao.GetDbInstance().(*gorm.DB)
 
-	blockNum, _ := sg.Dao.GetCurrentBlockNum(c)
+	blockNum, err := sg.Dao.GetCurrentBlockNum(c)
+	if err != nil {
+		return err
+	}
 	for i := int(blockNum); i >= 0; i -= int(model.SplitTableBlockNum) {
 
 		tableName := model.TableNameFromInterface(&model.ChainEvent{BlockNum: uint(i)}, db)
@@ -68,7 +113,7 @@ func InitTransfer(sg *Storage) {
 		query := db.Table(tableName).
 			Where("module_id = ?", "balances").
 			Where("event_id = ?", "Transfer")
-		query.FindInBatches(&events, 50000, func(tx *gorm.DB, batch int) error {
+		result := query.FindInBatches(&events, 50000, func(tx *gorm.DB, batch int) error {
 			var blocks = make(map[int]*storage.Block)
 			var blockNums []uint
 
@@ -76,7 +121,7 @@ func InitTransfer(sg *Storage) {
 				blockNums = append(blockNums, e.BlockNum)
 			}
 
-			for _, b := range sg.Dao.GetBlocksByNums(c, blockNums, "id,block_num,block_timestamp") {
+			for _, b := range sg.Dao.GetBlocksByNums(c, blockNums, "*") {
 				blocks[b.BlockNum] = b
 			}
 
@@ -86,10 +131,15 @@ func InitTransfer(sg *Storage) {
 			}
 			for index := range events {
 				event := events[index]
-				_ = EmitEvent(c, sg, event.AsPlugin(), blocks[int(event.BlockNum)])
+				if err := EmitEvent(c, sg, event.AsPlugin(), blocks[int(event.BlockNum)]); err != nil {
+					return err
+				}
 			}
 			return nil
 		})
+		if result.Error != nil {
+			return result.Error
+		}
 	}
-
+	return nil
 }

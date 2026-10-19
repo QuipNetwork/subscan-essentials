@@ -110,9 +110,10 @@ func (m MockServer) API_GetLogs(ctx context.Context, opts ...model.Option) (res 
 }
 
 func (m MockServer) API_GetAccounts(ctx context.Context, h160 []string) (map[string]balanceModel.Account, error) {
+	one, two := decimal.NewFromInt(1), decimal.NewFromInt(2)
 	return map[string]balanceModel.Account{
-		"0x66b8c60c79dfad02fc04f1f13aab0f6feff8615b": {Balance: decimal.NewFromInt(1)},
-		"0xe22d73f5dcccb31a994ad4e7ad265cf69b4e725a": {Balance: decimal.NewFromInt(2)},
+		"0x66b8c60c79dfad02fc04f1f13aab0f6feff8615b": {AccountState: balanceModel.AccountState{Balance: &one, StateStatus: "available"}},
+		"0xe22d73f5dcccb31a994ad4e7ad265cf69b4e725a": {AccountState: balanceModel.AccountState{Balance: &two, StateStatus: "available"}},
 	}, nil
 }
 

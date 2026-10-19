@@ -1,0 +1,63 @@
+{
+  "capturedAt": "2026-10-15T00:00:07.535854+00:00",
+  "rpc": "https://bootnode-2.aglais.quip.network:20049/rpc",
+  "blockHash": "0xe5e55f20230e3e8f730ef47e54cd265e1aa9b1271cd506131231108d5695caa9",
+  "calls": [
+    {
+      "file": "001-genesis",
+      "method": "chain_getBlockHash",
+      "params": [
+        0
+      ],
+      "requestSha256": "1297fe4274ba1853e926e7ec9b71fd9f4eee87c1fa2c9e50011e26b18eb0fa9d",
+      "responseSha256": "15eec71f92e356faf6d19c042688d62323dee1dcdfdd91a1b2bcdc9c58566839"
+    },
+    {
+      "file": "002-hash",
+      "method": "chain_getBlockHash",
+      "params": [
+        591853
+      ],
+      "requestSha256": "cbccee516a67a8414f5f26854d0d2d4642f18a16fdccc4d116302c1112963163",
+      "responseSha256": "6c9e7ed90ff0e6e57d40e5cdf156aa7a86160cb36e2f270870561e0e03775fb2"
+    },
+    {
+      "file": "003-runtime",
+      "method": "state_getRuntimeVersion",
+      "params": [
+        "0xe5e55f20230e3e8f730ef47e54cd265e1aa9b1271cd506131231108d5695caa9"
+      ],
+      "requestSha256": "e14fb6389eb41968f2697b4befeef32c42cd11acb9beaa33b041ee90912d6c22",
+      "responseSha256": "37d634ab478b74ab32f8aad2443231e1e7f3a82947e6bb8f33db700a5ea08aa6"
+    },
+    {
+      "file": "004-metadata",
+      "method": "state_getMetadata",
+      "params": [
+        "0xe5e55f20230e3e8f730ef47e54cd265e1aa9b1271cd506131231108d5695caa9"
+      ],
+      "requestSha256": "d0d2032be2598b60c3f8becd55bca88ae96b791d4165015e420253cd45add592",
+      "responseSha256": "ae6e6431757a307dbbad92ad839bf03f72b52c330b53c86b28674bc1549caad5"
+    },
+    {
+      "file": "005-session",
+      "method": "state_getStorageAt",
+      "params": [
+        "0xcec5070d609dd3497f72bde07fc96ba072763800a36a99fdfc7c10f6415f6ee6",
+        "0xe5e55f20230e3e8f730ef47e54cd265e1aa9b1271cd506131231108d5695caa9"
+      ],
+      "requestSha256": "7144e2976c6d655aa023c171907dee9be87baa5a3c8c787cbc0e3297635bdb79",
+      "responseSha256": "08f5625f7eacad237c19d1996bb34589e2bb6d60e7c205b81e4c7b066e2faa3e"
+    },
+    {
+      "file": "006-validators",
+      "method": "state_getStorageAt",
+      "params": [
+        "0xcec5070d609dd3497f72bde07fc96ba088dcde934c658227ee1dfafcd6e16903",
+        "0xe5e55f20230e3e8f730ef47e54cd265e1aa9b1271cd506131231108d5695caa9"
+      ],
+      "requestSha256": "8cbbb555a92c80721e4ef14d0948597dbcaf33fcfa5b435efed2d54e1659659e",
+      "responseSha256": "f6c39d0d2caf24d04211cf659b02a18895135d9a2ab797137f24b3c22c568e05"
+    }
+  ]
+}

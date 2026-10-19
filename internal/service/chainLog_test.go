@@ -7,7 +7,7 @@ import (
 )
 
 func TestService_EmitLog(t *testing.T) {
-	txn := testSrv.dao.DbBegin()
+	txn, _ := testSrv.dao.DbBegin()
 	defer testSrv.dao.DbRollback(txn)
 
 	logs, err := substrate.DecodeLogDigest([]string{

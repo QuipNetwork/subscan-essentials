@@ -1,0 +1,18 @@
+{
+  "digest": "02000000006500000000000000",
+  "expectedAuthor": "2ae2e0c0866375557b3d4f209e582522559e6bce1797b31f5b21ce20a3d4f100",
+  "kind": "controlled native runtime hooks; not a network block",
+  "parentSessionIndex": 0,
+  "parentValidators": [
+    "4de1b06b817f61f830d5b046e4fed5c124aa52ea97ba077817c225e56e757ac9",
+    "2ae2e0c0866375557b3d4f209e582522559e6bce1797b31f5b21ce20a3d4f100"
+  ],
+  "postSessionIndex": 1,
+  "postValidators": [
+    "2ae2e0c0866375557b3d4f209e582522559e6bce1797b31f5b21ce20a3d4f100",
+    "4de1b06b817f61f830d5b046e4fed5c124aa52ea97ba077817c225e56e757ac9"
+  ],
+  "runtimeCommit": "52a9070944d4cd2319a5cddcd2da1d8eb0a63abc",
+  "sdkCommit": "845eb9986c7131056b077d14ad7249f9d65ca111",
+  "slot": 101
+}

@@ -12,15 +12,17 @@ func (s *Service) AddEvent(txn *dao.GormDB, block *model.ChainBlock, events []mo
 	var inserts []model.ChainEvent
 	for _, event := range events {
 		e := model.ChainEvent{
-			ExtrinsicIndex: fmt.Sprintf("%d-%d", block.BlockNum, event.ExtrinsicIdx),
-			BlockNum:       block.BlockNum,
-			ModuleId:       strings.ToLower(event.ModuleId),
+			BlockNum: block.BlockNum,
+			ModuleId: strings.ToLower(event.ModuleId),
 			// Params:         event.Params,
 			EventIdx:       event.EventIdx,
 			EventId:        event.EventId,
 			ExtrinsicIdx:   event.ExtrinsicIdx,
 			Phase:          event.Phase,
 			ParamsRawBytes: util.HexToBytes(event.ParamsRaw),
+		}
+		if event.Phase == 0 {
+			e.ExtrinsicIndex = fmt.Sprintf("%d-%d", block.BlockNum, event.ExtrinsicIdx)
 		}
 		e.ID = e.Id()
 		inserts = append(inserts, e)

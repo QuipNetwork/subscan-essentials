@@ -2,21 +2,31 @@ package dao
 
 import (
 	"context"
+	"errors"
 	"github.com/itering/subscan-plugin/storage"
 	"github.com/itering/subscan/model"
 	bModel "github.com/itering/subscan/plugins/balance/model"
 	"gorm.io/gorm"
 )
 
-func CreateTransfer(ctx context.Context, d *Storage, transfer *bModel.Transfer) error {
-	db := d.Dao.GetDbInstance().(*gorm.DB)
-	query := db.WithContext(ctx).Scopes(model.IgnoreDuplicate).Create(transfer)
-	if query.RowsAffected > 0 {
-		_, _ = d.Pool.HINCRBY(ctx, model.MetadataCacheKey(), "total_transfer", 1)
-		_ = RefreshAccount(ctx, d, model.CheckoutParamValueAddress(transfer.Sender))
-		_ = RefreshAccount(ctx, d, model.CheckoutParamValueAddress(transfer.Receiver))
+func CreateTransfer(ctx context.Context, d *Storage, transfer *bModel.Transfer, block *storage.Block) error {
+	if err := withCounts(ctx, d, func(tx *gorm.DB, counts *bModel.ProjectionCounts) error {
+		query := tx.Scopes(model.IgnoreDuplicate).Create(transfer)
+		if query.Error != nil {
+			return query.Error
+		}
+		counts.Transfers += query.RowsAffected
+		return nil
+	}); err != nil {
+		return err
 	}
-	return query.Error
+	// Retry all subsequent effects even when the transfer already exists.
+	if err := SyncCounts(ctx, d); err != nil {
+		return err
+	}
+	senderErr := RefreshAccount(ctx, d, block, model.CheckoutParamValueAddress(transfer.Sender))
+	receiverErr := RefreshAccount(ctx, d, block, model.CheckoutParamValueAddress(transfer.Receiver))
+	return errors.Join(senderErr, receiverErr)
 }
 
 func TransfersCursor(ctx context.Context, db storage.DB, limit int, before, after *uint, opts ...model.Option) ([]bModel.Transfer, bool, bool) {

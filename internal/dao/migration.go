@@ -24,7 +24,7 @@ func (d *Dao) Migration() {
 }
 
 func (d *Dao) internalTables(blockNum uint) (models []interface{}) {
-	models = append(models, model.RuntimeVersion{}, model.Session{}, model.AccountExtrinsicMapping{})
+	models = append(models, model.RuntimeVersion{}, model.Session{}, model.AccountExtrinsicMapping{}, model.BlockPublication{}, model.PluginProjection{})
 	for i := 0; uint(i) <= blockNum/model.SplitTableBlockNum; i++ {
 		models = append(
 			models,

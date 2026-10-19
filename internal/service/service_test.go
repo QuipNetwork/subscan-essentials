@@ -95,10 +95,23 @@ func (m *MockDao) SetHeartBeatNow(context.Context, string) error {
 	return nil
 }
 
-func (m *MockDao) DbBegin() *dao.GormDB {
-	return &dao.GormDB{}
+func (m *MockDao) DbBegin() (*dao.GormDB, error) {
+	return &dao.GormDB{}, nil
 }
-func (m *MockDao) DbCommit(*dao.GormDB) {
+func (m *MockDao) DbCommit(*dao.GormDB) error {
+	return nil
+}
+func (m *MockDao) CreatePluginProjections(*dao.GormDB, []model.PluginProjection) error { return nil }
+func (m *MockDao) PendingPluginProjections(context.Context, *uint, int) ([]model.PluginProjection, error) {
+	return nil, nil
+}
+func (m *MockDao) ReservePluginProjection(context.Context, string) (bool, error)  { return true, nil }
+func (m *MockDao) RecordProjectionDelivery(context.Context, string, string) error { return nil }
+func (m *MockDao) ProcessPluginProjection(context.Context, string, func(model.PluginProjection) error) error {
+	return nil
+}
+func (m *MockDao) PublishBlockCompletion(context.Context, uint) error {
+	return nil
 }
 func (m *MockDao) DbRollback(*dao.GormDB) {
 }
@@ -204,7 +217,7 @@ func (m *MockDao) GetExtrinsicsByBlockNum(blockNum uint) []model.ChainExtrinsicJ
 func (m *MockDao) GetExtrinsicList(c context.Context, page, row int, order string, fixedTableIndex int, afterId uint, queryWhere ...model.Option) ([]model.ChainExtrinsic, int) {
 	return nil, 0
 }
-func (m *MockDao) GetExtrinsicListCursor(c context.Context, limit int, fixedTableIndex int, beforeId, afterId uint, queryWhere ...model.Option) ([]model.ChainExtrinsic, bool, bool) {
+func (m *MockDao) GetExtrinsicListCursor(c context.Context, limit int, fixedTableIndex int, beforeId, afterId uint, accountId string, queryWhere ...model.Option) ([]model.ChainExtrinsic, bool, bool) {
 	return []model.ChainExtrinsic{testSignedExtrinsic}, false, false
 }
 

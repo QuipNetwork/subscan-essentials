@@ -18,18 +18,32 @@ type Storage struct {
 }
 
 func EmitEvent(ctx context.Context, d *Storage, event *storage.Event, block *storage.Block) error {
+	if block == nil || block.BlockNum != event.BlockNum {
+		return fmt.Errorf("account event block unavailable or mismatched")
+	}
 	var paramEvent []storage.EventParam
-	_ = util.UnmarshalAny(&paramEvent, event.Params)
+	if err := util.UnmarshalAny(&paramEvent, event.Params); err != nil {
+		return err
+	}
 	switch event.EventId {
 	// [accountId, balance]
 	case "Endowed", "Reserved", "Unreserved", "Deposit", "Minted", "Issued", "Locked", "Unlocked", "Withdraw":
-		return RefreshAccount(ctx, d, model.CheckoutParamValueAddress(paramEvent[0].Value))
+		if len(paramEvent) < 1 {
+			return fmt.Errorf("%s event missing account", event.EventId)
+		}
+		return RefreshAccount(ctx, d, block, model.CheckoutParamValueAddress(paramEvent[0].Value))
 		// ["AccountId","AccountId","Balance"]
 	case "Transfer":
+		if len(paramEvent) < 3 {
+			return fmt.Errorf("transfer event missing parameters")
+		}
 		from := model.CheckoutParamValueAddress(paramEvent[0].Value)
 		to := model.CheckoutParamValueAddress(paramEvent[1].Value)
 		balance := util.DecimalFromInterface(paramEvent[2].Value)
 		t := token.GetDefaultToken()
+		if t == nil {
+			return fmt.Errorf("transfer token metadata unavailable")
+		}
 		return CreateTransfer(ctx, d, &bModel.Transfer{
 			Id:             event.Id,
 			Sender:         from,
@@ -40,17 +54,22 @@ func EmitEvent(ctx context.Context, d *Storage, event *storage.Event, block *sto
 			Symbol:         t.Symbol,
 			TokenId:        t.TokenId,
 			ExtrinsicIndex: fmt.Sprintf("%d-%d", event.BlockNum, event.ExtrinsicIdx),
-		})
+		}, block)
 	}
 	return nil
 }
 
 func RefreshMetadata(ctx context.Context, d *Storage) {
-	// account
-	var count int64
-	db := d.Dao.GetDbInstance().(*gorm.DB)
-	_ = db.Model(&bModel.Account{}).Count(&count)
-	var transferCount int64
-	_ = db.Model(&bModel.Transfer{}).Count(&transferCount)
-	_ = d.Pool.HmSetEx(ctx, model.MetadataCacheKey(), map[string]int{"total_transfer": int(transferCount), "total_account": int(count)}, -1)
+	err := withCounts(ctx, d, func(tx *gorm.DB, counts *bModel.ProjectionCounts) error {
+		if err := tx.Model(&bModel.Transfer{}).Count(&counts.Transfers).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&bModel.Account{}).Count(&counts.Accounts).Error; err != nil {
+			return err
+		}
+		return d.Pool.HmSetEx(ctx, model.MetadataCacheKey(), map[string]int64{"total_transfer": counts.Transfers, "total_account": counts.Accounts}, -1)
+	})
+	if err != nil {
+		util.Logger().Error(fmt.Errorf("balance count publication: %w", err))
+	}
 }
